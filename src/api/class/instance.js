@@ -29,11 +29,14 @@ class WhatsAppInstance {
     authState
     allowWebhook = undefined
     webhook = undefined
+    vinculatedDate= undefined
+    createdAt = undefined
 
     unreadMessages = undefined
     processingUnread = undefined
 
     dialogflow = undefined
+    botResponsesTimestamps = undefined
 
     instance = {
         key: this.key,
@@ -42,22 +45,36 @@ class WhatsAppInstance {
         messages: [],
         qrRetry: 0,
         customWebhook: '',
+        vinculatedDate: '', 
+        createdAt: ''  
     }
 
     axiosInstance = axios.create({
         baseURL: config.webhookUrl,
     })
 
-    constructor(key, allowWebhook, webhook) {
+    constructor(key, allowWebhook, webhook, options = {}) {
         this.key = key ? key : uuidv4()
         this.instance.customWebhook = this.webhook ? this.webhook : webhook
         this.allowWebhook = config.webhookEnabled
             ? config.webhookEnabled
             : allowWebhook
         this.unreadMessages = []
+
         this.processingUnread = false
+        this.createdAt = options.createdAt || new Date().toISOString()
+        this.vinculatedDate = options.vinculatedDate || null
 
         this.dialogflow = new DialogflowHandler()
+        this.botResponsesTimestamps = new Map()
+
+        this.instance.vinculatedDate = this.vinculatedDate
+        this.instance.createdAt = this.createdAt
+
+        this.name = options.name || `Instance_${this.key.substring(0, 8)}`
+        this.owner = options.owner || ''
+        this.metadata = options.metadata || {}
+        this.settings = { ...this.settings, ...options.settings }
 
         if (this.allowWebhook && this.instance.customWebhook !== null) {
             this.allowWebhook = true
@@ -66,18 +83,6 @@ class WhatsAppInstance {
                 baseURL: webhook,
             })
         }
-    }
-
-    async SendWebhook(type, body, key) {
-        console.log('Sending webhook:', { type, body, key })
-        if (!this.allowWebhook) return
-        this.axiosInstance
-            .post('', {
-                type,
-                body,
-                instanceKey: key,
-            })
-            .catch(() => {})
     }
 
     async init() {
@@ -257,97 +262,70 @@ class WhatsAppInstance {
 
         // on new mssage
         sock?.ev.on('messages.upsert', async (m) => {
-            console.log('Event: Messages upsert:', m)
-
-            if (m.type === 'prepend'){
+            if (m.type === 'prepend') {
+                console.log('Prepending messages:', m.messages)
                 this.instance.messages.unshift(...m.messages)
-                return;
-            }
-               
-            //if (m.type !== 'notify') return
-
-            //console.log(`Received ${m.messages.length} new messages`)
-
-            const newUnreadMessages = []
-
-            for (const msg of m.messages) {
-                if (!msg.message) continue
-
-                const messageType = Object.keys(msg.message)[0]
-                if (
-                    [
-                        'protocolMessage',
-                        'senderKeyDistributionMessage',
-                    ].includes(messageType)
-                ) {
-                    continue
-                }
-
-                // 1. Armazena como não lida
-                this.unreadMessages.push(msg)
-                //newUnreadMessages.push(msg)
-                this.instance.messages.unshift(msg)
-
-                // 2. Processa com Dialogflow se habilitado
-
-                await this.processMessageWithDialogflow(msg)
-
-                if (this.allowWebhook) {
-                    const webhookData = {
-                        key: this.key,
-                        ...msg,
-                    }
-
-                    if (
-                        ['all', 'messages', 'messages.upsert'].some((e) =>
-                            config.webhookAllowedEvents.includes(e)
-                        )
-                    ) {
-                        await this.SendWebhook('message', webhookData, this.key)
-                    }
-                }
+                return
             }
 
-            console.log(
-                `Received ${newUnreadMessages.length} new unread messages`
-            )
+            if (m.type !== 'notify') {
+                console.log('⏭️ Ignorando mensagem tipo:', m.type)
+                return false
+            }
 
-            // if (
-            //     config.processUnreadImmediately &&
-            //     newUnreadMessages.length > 0
-            // ) {
-            //     // Processa apenas as novas, não todas
-            //     console.log('Processing new unread messages immediately')
-            //     const tempQueue = [...newUnreadMessages]
-            //     for (const msg of tempQueue) {
-            //         await this.processSingleUnreadMessage(msg)
+            const incomingMessages = m.messages.filter((msg) => {
+                if (msg.key.fromMe) {
+                    console.log(
+                        '⏭️ Ignorando mensagem enviada pelo bot:',
+                        msg.key.id
+                    )
+                    return false
+                }
 
-            //         // Webhook se necessário
-            //         if (this.allowWebhook) {
-            //             const webhookData = {
-            //                 key: this.key,
-            //                 ...msg,
-            //             }
+                if (!msg.message) {
+                    return false
+                }
 
-            //             // Seu código de download de mídia aqui (se config.webhookBase64)
-            //             if (config.webhookBase64) {
-            //                 // ... mantém seu código atual
-            //             }
+                return true
+            })
 
-            //             if (
-            //                 ['all', 'messages', 'messages.upsert'].some((e) =>
-            //                     config.webhookAllowedEvents.includes(e)
-            //                 )
-            //             ) {
-            //                 await this.SendWebhook(
-            //                     'message',
-            //                     webhookData,
-            //                     this.key
-            //                 )
-            //             }
-            //         }
-            //     }
-            // }
+            if (incomingMessages.length === 0) {
+                console.log('⏭️ Nenhuma mensagem nova para processar')
+                return
+            }
+
+            for (const msg of incomingMessages) {
+                try {
+                    // Armazena como não lida
+                    this.unreadMessages.push(msg)
+                    this.instance.messages.unshift(msg)
+
+                    // Processa com Dialogflow
+                    await this.processMessageWithDialogflow(msg)
+
+                    // Webhook
+                    if (this.allowWebhook) {
+                        const webhookData = {
+                            key: this.key,
+                            ...msg,
+                        }
+
+                        if (
+                            ['all', 'messages', 'messages.upsert'].some((e) =>
+                                config.webhookAllowedEvents.includes(e)
+                            )
+                        ) {
+                            await this.SendWebhook(
+                                'message',
+                                webhookData,
+                                this.key
+                            )
+                        }
+                    }
+                } catch (error) {
+                    console.error('❌ Erro no processamento:', error)
+                }
+            }
         })
 
         sock?.ev.on('messages.update', async (messages) => {
@@ -406,8 +384,6 @@ class WhatsAppInstance {
         })
 
         sock?.ev.on('groups.upsert', async (newChat) => {
-            //console.log('groups.upsert')
-            //console.log(newChat)
             this.createGroupByApp(newChat)
             if (
                 ['all', 'groups', 'groups.upsert'].some((e) =>
@@ -442,8 +418,6 @@ class WhatsAppInstance {
         })
 
         sock?.ev.on('group-participants.update', async (newChat) => {
-            //console.log('group-participants.update')
-            //console.log(newChat)
             this.updateGroupParticipantsByApp(newChat)
             if (
                 [
@@ -463,39 +437,96 @@ class WhatsAppInstance {
         })
     }
 
+    async SendWebhook(type, body, key) {
+        if (!this.allowWebhook) return
+        this.axiosInstance
+            .post('', {
+                type,
+                body,
+                instanceKey: key,
+            })
+            .catch(() => {})
+    }
+
     async processMessageWithDialogflow(messageData) {
         try {
-            console.log('🤖 Processando com Dialogflow...')
+            // Verifica se não é uma resposta a uma mensagem nossa muito recente
+            const userId = messageData.key.remoteJid
+            const botLastResponse = this.botResponsesTimestamps.get(userId)
+            const now = Date.now()
+
+            if (botLastResponse && now - botLastResponse < 1000) {
+                console.log(
+                    '⏳ Cooldown: resposta muito recente para este usuário'
+                )
+            }
 
             // Processa com Dialogflow
             const dialogflowResult = await this.dialogflow.processMessage(
                 messageData
             )
 
-            if (!dialogflowResult.success) {
-                console.log(
-                    '⏭️ Dialogflow não processou:',
-                    dialogflowResult.error
-                )
+            const textResponses = dialogflowResult.filter(
+                (r) => r.type === 'text'
+            )
+
+            console.log(
+                '   📝 Respostas de texto filtradas :: ',
+                textResponses.length
+            )
+
+            if (textResponses.length === 0) {
+                console.log('⚠️ Nenhuma resposta de texto para formatar')
                 return
             }
 
-            console.log('✅ Dialogflow:', {
-                intent: dialogflowResult.intent,
-                confidence: dialogflowResult.confidence,
-                hasResponse: !!dialogflowResult.response,
-            })
+            // if (textResponses.length > 0) {
+            //     await Promise.all(
+            //         textResponses.map(async (r) => {
+            //             console.log('📨 Enviando resposta para WhatsApp :: ', r)
+            //             await this.sendDialogflowResponse(
+            //                 messageData.key.remoteJid,
+            //                 r.content
+            //             )
+            //         })
+            //     )
+            // }
+            for (let i = 0; i < textResponses.length; i++) {
+                const response = textResponses[i]
 
-            // Se tiver resposta, envia para WhatsApp
-            if (
-                dialogflowResult.response &&
-                dialogflowResult.response.trim() !== ''
-            ) {
+                console.log(
+                    `📨 Enviando resposta ${i + 1}/${textResponses.length}:`,
+                    {
+                        content:
+                            response.content.substring(0, 50) +
+                            (response.content.length > 50 ? '...' : ''),
+                        source: response.source,
+                    }
+                )
+
+                // Envia a mensagem
                 await this.sendDialogflowResponse(
                     messageData.key.remoteJid,
-                    dialogflowResult.response
+                    response.content
                 )
+
+                // Aguarda um pouco entre mensagens (1-2 segundos)
+                // Isso é importante para não floodar o WhatsApp
+                if (i < textResponses.length - 1) {
+                    // Não espera após a última
+                    const delay = Math.floor(Math.random() * 1000) + 1000 // 1-2 segundos
+                    console.log(
+                        `⏳ Aguardando ${delay}ms antes da próxima mensagem...`
+                    )
+                    await new Promise((resolve) => setTimeout(resolve, delay))
+                }
             }
+
+            this.botResponsesTimestamps.set(userId, now)
+
+            console.log(
+                `✅ Todas as ${textResponses.length} mensagens enviadas`
+            )
         } catch (error) {
             console.error('❌ Erro ao processar com Dialogflow:', error)
         }
@@ -503,23 +534,84 @@ class WhatsAppInstance {
 
     async sendDialogflowResponse(to, text) {
         try {
-            console.log('📤 Enviando resposta do Dialogflow:', {
+            // Limita o tamanho do log
+            const logText =
+                text.length > 100 ? text.substring(0, 100) + '...' : text
+
+            console.log('📤 Enviando para WhatsApp:', {
                 to: to,
-                textLength: text.length,
+                length: text.length,
+                preview: logText,
             })
 
             const result = await this.sendTextMessage(to, text)
 
-            console.log('✅ Resposta enviada:', {
-                messageId: result?.key?.id,
-            })
+            if (result?.key?.id) {
+                console.log('✅ Mensagem enviada com ID:', result.key.id)
+            } else {
+                console.log('✅ Mensagem enviada (sem ID retornado)')
+            }
 
-            return result
+            return {
+                success: true,
+                messageId: result?.key?.id,
+                result: result,
+            }
         } catch (error) {
-            console.error('❌ Erro ao enviar resposta:', error)
-            return null
+            console.error('❌ Erro ao enviar resposta:', error.message)
+
+            // Se for erro de rate limit, espera um pouco
+            if (
+                error.message.includes('rate limit') ||
+                error.message.includes('too many')
+            ) {
+                console.log('⏳ Rate limit detectado, aguardando 5 segundos...')
+                await new Promise((resolve) => setTimeout(resolve, 5000))
+
+                // Tenta novamente
+                try {
+                    console.log('🔄 Tentando reenviar...')
+                    const retryResult = await this.sendTextMessage(to, text)
+                    return {
+                        success: true,
+                        messageId: retryResult?.key?.id,
+                        retry: true,
+                    }
+                } catch (retryError) {
+                    console.error('❌ Falha no reenvio:', retryError.message)
+                    return {
+                        success: false,
+                        error: retryError.message,
+                    }
+                }
+            }
+
+            return {
+                success: false,
+                error: error.message,
+            }
         }
     }
+
+    // async sendDialogflowResponse(to, text) {
+    //     try {
+    //         console.log('📤 Enviando resposta do Dialogflow:', {
+    //             to: to,
+    //             textLength: text.length,
+    //         })
+
+    //         const result = await this.sendTextMessage(to, text)
+
+    //         console.log('✅ Resposta enviada:', {
+    //             messageId: result?.key?.id,
+    //         })
+
+    //         return result
+    //     } catch (error) {
+    //         console.error('❌ Erro ao enviar resposta:', error)
+    //         return null
+    //     }
+    // }
 
     async processUnreadMessages() {
         if (this.processingUnread || this.unreadMessages.length === 0) {
@@ -681,7 +773,7 @@ class WhatsAppInstance {
     // }
 
     getWhatsAppId(id) {
-        console.log('getWhatsAppId input:', id)
+        //console.log('getWhatsAppId input:', id)
 
         // Se já tiver qualquer domínio WhatsApp, retorna como está
         if (
@@ -689,13 +781,13 @@ class WhatsAppInstance {
             id.includes('@s.whatsapp.net') ||
             id.includes('@c.us')
         ) {
-            console.log('Already has WhatsApp domain, returning as-is:', id)
+            //console.log('Already has WhatsApp domain, returning as-is:', id)
             return id
         }
 
         // Limpa o número
         let cleanId = id.replace(/[^\d-]/g, '')
-        console.log('Cleaned ID:', cleanId)
+        //console.log('Cleaned ID:', cleanId)
 
         // Se tiver hífen, é grupo
         if (cleanId.includes('-')) {

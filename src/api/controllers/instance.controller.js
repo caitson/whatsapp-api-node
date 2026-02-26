@@ -33,7 +33,8 @@ exports.qr = async (req, res) => {
         res.render('qrcode', {
             qrcode: qrcode,
         })
-    } catch {
+    } catch (error){
+        console.log('qrcode Error::: >>',error)
         res.json({
             qrcode: '',
         }) 
@@ -42,13 +43,16 @@ exports.qr = async (req, res) => {
 
 exports.qrbase64 = async (req, res) => {
     try {
+        console.log('req.query.key :: ',req.query.key)
         const qrcode = await WhatsAppInstances[req.query.key]?.instance.qr
+        console.log('qrcode :: ',qrcode)
         res.json({
             error: false,
             message: 'QR Base64 fetched successfully',
             qrcode: qrcode,
         })
-    } catch {
+    } catch(error) {
+        console.log("QRCODE qrbase64: error :::>",error)
         res.json({
             qrcode: '',
         })
@@ -140,3 +144,6 @@ exports.list = async (req, res) => {
         data: data,
     })
 }
+
+
+//f9d48e6c-4efb-426f-a60c-619267ba584e

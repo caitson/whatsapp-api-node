@@ -4,12 +4,13 @@ const logger = require('pino')()
 const config = require('../../config/config')
 
 class Session {
-    async restoreSessions() {
+    async restoreSessionsHold() {
         let restoredSessions = new Array()
         let allCollections = []
         try {
             const db = global.mongoClient.db('whatsapp-api')
             const result = await db.listCollections().toArray()
+            console.log('Result :: ',result)
             result.forEach((collection) => {
                 allCollections.push(collection.name)
             })
@@ -40,6 +41,29 @@ class Session {
             logger.error('Error restoring sessions')
             logger.error(e)
         }
+        return restoredSessions
+    }
+
+    async restoreSessions() {
+        const restoredSessions = []
+        const db = global.mongoClient.db('whatsapp-api')
+
+        const collections = await db.listCollections().toArray()
+
+        for (const collection of collections) {
+            const key = collection.name
+
+            const webhook = config.webhookEnabled ?? undefined
+            const webhookUrl = config.webhookUrl ?? undefined
+
+            const instance = new WhatsAppInstance(key, webhook, webhookUrl)
+
+            await instance.init() // AGORA É BLOQUEANTE
+
+            WhatsAppInstances[key] = instance
+            restoredSessions.push(key)
+        }
+
         return restoredSessions
     }
 }

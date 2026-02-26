@@ -54,12 +54,6 @@ class EventProcessor {
      * Processa mensagens do WhatsApp
      */
     async handleMessage(messageData) {
-        console.log('💬 Processando mensagem:', {
-            from: messageData.key?.remoteJid,
-            type: Object.keys(messageData.message || {})[0]
-        });
-
-        // Extrai texto da mensagem
         const text = this.extractTextFromMessage(messageData);
         
         if (!text) {
@@ -70,7 +64,6 @@ class EventProcessor {
         // Obtém o ID do remetente (sem o @s.whatsapp.net)
         const senderId = messageData.key.remoteJid.split('@')[0];
         
-        // Processa com Dialogflow
         const dialogflowResponse = await this.dialogflow.processMessage(text, senderId);
         
         if (!dialogflowResponse.success) {

@@ -1,4 +1,3 @@
-// services/DialogflowHandler.js
 const dialogflow = require('@google-cloud/dialogflow')
 const { v4: uuidv4 } = require('uuid')
 
@@ -16,7 +15,6 @@ class DialogflowHandler {
         }
 
         try {
-
             // Configura o cliente do Dialogflow
             this.sessionClient = new dialogflow.SessionsClient({
                 credentials: {
@@ -33,9 +31,58 @@ class DialogflowHandler {
         }
     }
 
-    /**
-     * Extrai texto de uma mensagem do WhatsApp
-     */
+    async processMessage(messageData) {
+        if (!this.enabled) {
+            console.log('⏭️ Dialogflow desativado')
+            return {
+                success: false,
+                error: 'Dialogflow not configured',
+            }
+        }
+
+        try {
+            const text = this.extractText(messageData)
+
+            if (!text || text.trim() === '') {
+                return {
+                    success: false,
+                    error: 'No text to process',
+                }
+            }
+
+            const sender = messageData.key.remoteJid.split('@')[0]
+            const sessionId = sender || uuidv4()
+            const sessionPath = this.sessionClient.projectAgentSessionPath(
+                this.projectId,
+                sessionId
+            )
+
+            const request = {
+                session: sessionPath,
+                queryInput: {
+                    text: {
+                        text: text,
+                        languageCode: 'pt-BR',
+                    },
+                },
+            }
+
+            const responses = await this.sessionClient.detectIntent(request)
+            const result = responses[0].queryResult
+
+            const allResponses = this.extractAllResponses(result)
+
+            return allResponses;
+       
+        } catch (error) {
+            console.error('❌ Erro no Dialogflow:', error)
+            return {
+                success: false,
+                error: error.message,
+            }
+        }
+    }
+
     extractText(messageData) {
         if (!messageData.message) return null
 
@@ -75,117 +122,201 @@ class DialogflowHandler {
         }
     }
 
-    /**
-     * Processa mensagem com Dialogflow
-     */
-    async processMessage(messageData) {
-        if (!this.enabled) {
-            console.log('⏭️ Dialogflow desativado')
-            return {
-                success: false,
-                error: 'Dialogflow not configured',
-            }
-        }
+    // async processWelcomeEvent(senderId) {
+    //     if (!this.enabled) return null
 
-        try {
-            // Extrai texto
-            const text = this.extractText(messageData)
+    //     try {
+    //         const sessionPath = this.sessionClient.projectAgentSessionPath(
+    //             this.projectId,
+    //             senderId
+    //         )
 
-            if (!text || text.trim() === '') {
-                return {
-                    success: false,
-                    error: 'No text to process',
+    //         const request = {
+    //             session: sessionPath,
+    //             queryInput: {
+    //                 event: {
+    //                     name: 'WELCOME',
+    //                     languageCode: 'pt-BR',
+    //                 },
+    //             },
+    //         }
+
+    //         const responses = await this.sessionClient.detectIntent(request)
+    //         const result = responses[0].queryResult
+
+    //         return {
+    //             success: true,
+    //             response: result.fulfillmentText,
+    //         }
+    //     } catch (error) {
+    //         console.error('❌ Erro no evento WELCOME:', error)
+    //         return null
+    //     }
+    // }
+
+    extractAllResponses(queryResult) {
+        const responses = []
+
+        if (
+            queryResult.fulfillmentMessages &&
+            Array.isArray(queryResult.fulfillmentMessages)
+        ) {
+            queryResult.fulfillmentMessages.forEach((msg, index) => {
+                switch (msg.platform) {
+                    case 'PLATFORM_UNSPECIFIED': {
+                        const textMessages = msg.text?.text || []
+                        textMessages.forEach((text, textIndex) => {
+                            if (text && text.trim() !== '') {
+                                responses.push({
+                                    type: 'text',
+                                    content: text,
+                                    source: 'fulfillmentMessages.text',
+                                    index: index,
+                                    textIndex: textIndex,
+                                })
+                            }
+                        })
+                        break
+                    }
+
+                    case 'payload': {
+                        responses.push({
+                            type: 'payload',
+                            content: msg.payload,
+                            source: 'fulfillmentMessages.payload',
+                            index: index,
+                        })
+                        break
+                    }
+
+                    default: {
+                        console.log(
+                            `   ℹ️ Item ${index}: tipo não processado - ${msg.platform}`
+                        )
+                        break
+                    }
                 }
-            }
-
-            // Usa o número do remetente como sessionId
-            const sender = messageData.key.remoteJid.split('@')[0]
-            const sessionId = sender || uuidv4()
-
-            console.log('📤 Enviando para Dialogflow:', {
-                text: text.substring(0, 50) + (text.length > 50 ? '...' : ''),
-                sender: sender,
-                sessionId: sessionId,
             })
+        }
 
-            // Configura a sessão
-            const sessionPath = this.sessionClient.projectAgentSessionPath(
-                this.projectId,
-                sessionId
-            )
-
-            const request = {
-                session: sessionPath,
-                queryInput: {
-                    text: {
-                        text: text,
-                        languageCode: 'pt-BR',
-                    },
-                },
-            }
-
-            // Chama Dialogflow
-            const responses = await this.sessionClient.detectIntent(request)
-            const result = responses[0].queryResult
-
-            console.log('📥 Dialogflow respondeu:', {
-                intent: result.intent?.displayName || 'Nenhum',
-                confidence: result.intentDetectionConfidence,
-                hasResponse: !!result.fulfillmentText,
-            })
-
-            return {
-                success: true,
-                text: text,
-                intent: result.intent?.displayName,
-                confidence: result.intentDetectionConfidence,
-                response: result.fulfillmentText,
-                parameters: result.parameters?.fields || {},
-                raw: result,
-            }
-        } catch (error) {
-            console.error('❌ Erro no Dialogflow:', error)
-            return {
-                success: false,
-                error: error.message,
+        if (responses.length === 0) {
+            if (
+                queryResult.fulfillmentText &&
+                queryResult.fulfillmentText.trim() !== ''
+            ) {
+                responses.push({
+                    type: 'text',
+                    content: queryResult.fulfillmentText,
+                    source: 'fulfillmentText',
+                })
+            } else {
+                console.log('⚠️ Nenhuma resposta encontrada')
             }
         }
+        return responses
     }
 
-    /**
-     * Processa um evento de boas-vindas
-     */
-    async processWelcomeEvent(senderId) {
-        if (!this.enabled) return null
+    // formatResponse(responses) {
 
-        try {
-            const sessionPath = this.sessionClient.projectAgentSessionPath(
-                this.projectId,
-                senderId
+    //     console.log('   📝 Formatando respostas :: ',responses)
+    //     if (responses.length === 0) {
+    //         console.log('⚠️ Nenhuma resposta para formatar')
+    //         return ''
+    //     }
+
+    //     const textResponses = responses.filter((r) => r.type === 'text')
+
+    //     console.log('   📝 Respostas de texto filtradas :: ',textResponses.length)
+
+    //     if (textResponses.length === 0) {
+    //         console.log('⚠️ Nenhuma resposta de texto para formatar')
+    //         return ''
+    //     }
+
+    //     if (textResponses.length > 1) {
+    //         console.log('   📝 Múltiplas respostas de texto encontradas :: ',textResponses)
+    //         const formatted = textResponses.map((r) => r.content).join('\n\n')
+
+
+    //         return formatted
+    //     }
+    //     console.log('   📝 Resposta única de texto encontrada', textResponses)
+    //     const singleResponse = textResponses[0].content
+    //     return singleResponse
+    // }
+
+    // formatResponseEndSendToWhatsApp(responses) {
+    //     console.log('   📝 Formatando respostas :: ',responses)
+    //     if (responses.length === 0) {
+    //         console.log('⚠️ Nenhuma resposta para formatar')
+    //         return;
+    //     }
+
+    //     const textResponses = responses.filter((r) => r.type === 'text')
+
+    //     console.log('   📝 Respostas de texto filtradas :: ',textResponses.length)
+
+    //     if (textResponses.length === 0) {
+    //         console.log('⚠️ Nenhuma resposta de texto para formatar')
+    //         return;
+    //     }
+
+    //     if (textResponses.length > 0) {
+    //         console.log('   📝 Múltiplas respostas de texto encontradas :: ',textResponses)
+    //         textResponses.map((r) =>{
+    //             console.log('   📝 Enviando para o WhatsApp :: ',r.content)
+                
+    //         })
+    //     }
+    // }
+
+    // processFulfillmentMessage(msg, index, responses) {
+
+    //     switch (msg.platform) {
+    //         case 'PLATFORM_UNSPECIFIED':
+    //             this.processTextMessage(msg, index, responses)
+    //             break
+
+    //         case 'payload':
+    //             this.processPayloadMessage(msg, index, responses)
+    //             break
+
+    //         default:
+    //             console.log(`   ℹ️ Tipo não processado: ${msg.platform}`)
+    //             break
+    //     }
+    // }
+
+    processTextMessage(msg, index, responses) {
+        const textMessages = msg.text?.text || []
+        if (textMessages.length > 0) {
+            console.log(
+                `   📝 Encontrado ${textMessages.length} texto(s) no item ${index}`
             )
-
-            const request = {
-                session: sessionPath,
-                queryInput: {
-                    event: {
-                        name: 'WELCOME',
-                        languageCode: 'pt-BR',
-                    },
-                },
-            }
-
-            const responses = await this.sessionClient.detectIntent(request)
-            const result = responses[0].queryResult
-
-            return {
-                success: true,
-                response: result.fulfillmentText,
-            }
-        } catch (error) {
-            console.error('❌ Erro no evento WELCOME:', error)
-            return null
         }
+
+        textMessages.forEach((text, textIndex) => {
+            if (text && text.trim() !== '') {
+                responses.push({
+                    type: 'text',
+                    content: text,
+                    source: 'fulfillmentMessages.text',
+                    index: index,
+                    textIndex: textIndex,
+                })
+            }
+        })
     }
+
+    processPayloadMessage(msg, index, responses) {
+        responses.push({
+            type: 'payload',
+            content: msg.payload,
+            source: 'fulfillmentMessages.payload',
+            index: index,
+        })
+    }
+
 }
 
 module.exports = DialogflowHandler
