@@ -5,6 +5,7 @@ yarn.lock
 
 # APPLICATION
 .env
+data
 sessiondata
 
 # IDEs
