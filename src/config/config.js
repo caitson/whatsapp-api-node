@@ -24,6 +24,11 @@ const CLIENT_VERSION = process.env.CLIENT_VERSION || '4.0.0'
 const MONGODB_ENABLED = !!(
     process.env.MONGODB_ENABLED && process.env.MONGODB_ENABLED === 'true'
 )
+
+//Mongo database
+const MONGO_DB = !!(
+    process.env.MONGO_DB && process.env.WEBHOOK_ENABLED === 'true'
+)
 // URL of the Mongo DB
 const MONGODB_URL =
     process.env.MONGODB_URL || 'mongodb://127.0.0.1:27017/WhatsAppInstance'
@@ -60,6 +65,7 @@ module.exports = {
     mongoose: {
         enabled: MONGODB_ENABLED,
         url: MONGODB_URL,
+        db: MONGO_DB,
         options: {
             // useCreateIndex: true,
             useNewUrlParser: true,
@@ -76,6 +82,30 @@ module.exports = {
         fetchFromServer: true, // Buscar também do servidor WhatsApp
         maxUnreadAgeHours: 24, // Idade máxima para considerar como não lida
         autoMarkAsRead: false, // Não marcar automaticamente como lida
+    },
+    INTENTS: {
+        COMPTE_OM: 'Res.OrangeMoney - CompteOrangeMoney - yes',
+        BIENVENUE: 'Bienvenue',
+        MENU: 'Menu',
+        FALLBACK: 'Fallback',
+    },
+    ERROR_MESSAGES: {
+        AUDIO: 'Desculpe, ainda não posso processar mensagens de áudio.',
+        VIDEO: 'Desculpe, ainda não posso processar vídeos.',
+        IMAGE: 'Desculpe, não posso processar esta imagem no momento.',
+        GENERIC: 'Ocorreu um erro. Por favor, tente novamente mais tarde.',
+    },
+    MESSAGE_TYPES: {
+        CHAT: 'chat',
+        TEXT: 'text',
+        IMAGE: 'image',
+        VIDEO: 'video',
+        AUDIO: 'ptt',
+        PAYLOAD: 'payload',
+    },
+    RESPONSE_TYPES: {
+        ENTRÉE: 'Entrée',
+        TRAITÉ: 'Traité',
     },
     webhookEnabled: WEBHOOK_ENABLED,
     webhookUrl: WEBHOOK_URL,

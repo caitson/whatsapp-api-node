@@ -1,5 +1,5 @@
 const { MongoClient } = require('mongodb')
-const logger = require('pino')()
+const logger = require('../../api/utils/console')
 
 module.exports = async function connectToCluster(uri) {
     let mongoClient
@@ -9,12 +9,12 @@ module.exports = async function connectToCluster(uri) {
             useNewUrlParser: true,
             useUnifiedTopology: true,
         })
-        logger.info('STATE: Connecting to MongoDB')
+        //console.info('STATE: Connecting to MongoDB')
         await mongoClient.connect()
-        logger.info('STATE: Successfully connected to MongoDB')
+        logger.info('Successfully connected to MongoDB')
         return mongoClient
     } catch (error) {
-        logger.error('STATE: Connection to MongoDB failed!', error)
+        //console.error('STATE: Connection to MongoDB failed!', error)
         process.exit()
     }
 }

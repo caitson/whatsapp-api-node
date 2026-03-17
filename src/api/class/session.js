@@ -1,49 +1,10 @@
 /* eslint-disable no-unsafe-optional-chaining */
 const { WhatsAppInstance } = require('../class/instance')
-const logger = require('pino')()
+// const logger = require('pino')()
+const logger = require('../../api/utils/console')
 const config = require('../../config/config')
 
 class Session {
-    async restoreSessionsHold() {
-        let restoredSessions = new Array()
-        let allCollections = []
-        try {
-            const db = global.mongoClient.db('whatsapp-api')
-            const result = await db.listCollections().toArray()
-            console.log('Result :: ',result)
-            result.forEach((collection) => {
-                allCollections.push(collection.name)
-            })
-
-            allCollections.map((key) => {
-                const query = {}
-                db.collection(key)
-                    .find(query)
-                    .toArray(async (err, result) => {
-                        if (err) throw err
-                        const webhook = !config.webhookEnabled
-                            ? undefined
-                            : config.webhookEnabled
-                        const webhookUrl = !config.webhookUrl
-                            ? undefined
-                            : config.webhookUrl
-                        const instance = new WhatsAppInstance(
-                            key,
-                            webhook,
-                            webhookUrl
-                        )
-                        await instance.init()
-                        WhatsAppInstances[key] = instance
-                    })
-                restoredSessions.push(key)
-            })
-        } catch (e) {
-            logger.error('Error restoring sessions')
-            logger.error(e)
-        }
-        return restoredSessions
-    }
-
     async restoreSessions() {
         const restoredSessions = []
         const db = global.mongoClient.db('whatsapp-api')
@@ -56,15 +17,72 @@ class Session {
             const webhook = config.webhookEnabled ?? undefined
             const webhookUrl = config.webhookUrl ?? undefined
 
-            const instance = new WhatsAppInstance(key, webhook, webhookUrl)
+            // 🟢 PASSA O IO GLOBAL PARA A INSTÂNCIA!
+            const instance = new WhatsAppInstance(
+                key, 
+                webhook, 
+                webhookUrl, 
+                {}, // options
+                global.io // ← Socket.io instance
+            )
 
             await instance.init() // AGORA É BLOQUEANTE
 
             WhatsAppInstances[key] = instance
             restoredSessions.push(key)
+            
+            logger.info(`✅ Sessão restaurada: ${key}`)
         }
 
+        logger.info(`🎯 Total de ${restoredSessions.length} sessões restauradas com Socket.io`)
         return restoredSessions
+    }
+    
+    // Método para criar nova instância (se precisar)
+    async createInstance(key, webhookEnabled, webhookUrl, options = {}) {
+        logger.info(`🆕 Criando nova instância: ${key}`)
+        
+        const instance = new WhatsAppInstance(
+            key,
+            webhookEnabled,
+            webhookUrl,
+            options,
+            global.io // ← Passa o io aqui também!
+        )
+        
+        await instance.init()
+        
+        WhatsAppInstances[key] = instance
+        
+        logger.info(`✅ Instância ${key} criada com sucesso`)
+        
+        return instance
+    }
+    
+    // Método para remover instância
+    async removeInstance(key) {
+        logger.info(`🗑️ Removendo instância: ${key}`)
+        
+        const instance = WhatsAppInstances[key]
+        if (instance) {
+            // Notificar via Socket.io que a instância foi removida
+            if (global.io) {
+                global.io.emit(`instance:${key}:removed`, {
+                    instanceId: key,
+                    timestamp: new Date().toISOString()
+                })
+            }
+            
+            // Limpar recursos
+            instance.instance.sock?.ev.removeAllListeners()
+            instance.instance.sock?.ws.close()
+            
+            delete WhatsAppInstances[key]
+            
+            logger.info(`✅ Instância ${key} removida`)
+        }
+        
+        return true
     }
 }
 

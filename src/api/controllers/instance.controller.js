@@ -3,6 +3,7 @@ const fs = require('fs')
 const path = require('path')
 const config = require('../../config/config')
 const { Session } = require('../class/session')
+const Message = require('../models/message.model')
 
 exports.init = async (req, res) => {
     const key = req.query.key
@@ -118,11 +119,13 @@ exports.delete = async (req, res) => {
 }
 
 exports.list = async (req, res) => {
+
     if (req.query.active) {
         let instance = []
         const db = global.mongoClient.db('whatsapp-api')
         const result = await db.listCollections().toArray()
         result.forEach((collection) => {
+            console.log('Found collection: ', collection)
             instance.push(collection.name)
         })
 
@@ -143,6 +146,35 @@ exports.list = async (req, res) => {
         message: 'All instance listed',
         data: data,
     })
+}
+
+exports.messages = async (req, res) => {
+    try {
+    const { key, remoteJid, limit = 50, page = 1 } = req.query;
+    
+    const query = {};
+    if (key) query.key = key;
+    if (remoteJid) query.remoteJid = remoteJid;
+    
+    const messages = await Message.find(query)
+      .sort({ timestamp: -1 })
+      .limit(parseInt(limit))
+      .skip((parseInt(page) - 1) * parseInt(limit));
+    
+    const total = await Message.countDocuments(query);
+    console.log('Total messages found: ', total)
+    res.json({
+      data: messages,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 }
 
 

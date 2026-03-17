@@ -1,12 +1,4 @@
 
-// exports.Text = async (req, res) => {
-//     const data = await global.WhatsAppInstances[req.query.key].sendTextMessage(
-//         req.body.id,
-//         req.body.message
-//     )
-//     return res.status(201).json({ error: false, data: data })
-// }
-
 exports.Text = async (req, res) => {    
     const { id, message } = req.body
     
@@ -60,24 +52,6 @@ exports.Text = async (req, res) => {
         })
     }
 }
-
-// exports.UnreadMessages = async (req, res) => {
-//     console.log('Fetching unread messages...')
-//      try {
-//         const instance = WhatsAppInstances[req.query.key]
-//         if (!instance) {
-//             return res.status(404).json({ error: 'Instance not found' })
-//         }
-        
-//         const unreadMessages = await WhatsAppInstances[req.query.key].processUnreadMessages()
-//         console.log(`Fetched ${unreadMessages} unread messages`)
-//        return res.json(unreadMessages)
-        
-//     } catch (error) {
-//         console.error('Error fetching unread messages:', error)
-//        return res.status(500).json({ error: error.message })
-//     }
-// }
 
 // No seu controller (message.controller.js)
 exports.UnreadMessages = async (req, res) => {
@@ -135,6 +109,11 @@ exports.UnreadMessages = async (req, res) => {
 
 
 exports.Image = async (req, res) => {
+    console.log('Received file upload request for image:', {
+        filename: req.file?.originalname,
+        mimetype: req.file?.mimetype,
+        size: req.file?.size
+    })
     const data = await WhatsAppInstances[req.query.key].sendMediaFile(
         req.body.id,
         req.file,
@@ -185,13 +164,50 @@ exports.Mediaurl = async (req, res) => {
     return res.status(201).json({ error: false, data: data })
 }
 
+// exports.Button = async (req, res) => {
+//     // console.log(res.body)
+//     const data = await WhatsAppInstances[req.query.key].sendButtonMessage(
+//         req.body.id,
+//         req.body.btndata
+//     )
+//     return res.status(201).json({ error: false, data: data })
+// }
+
 exports.Button = async (req, res) => {
-    // console.log(res.body)
-    const data = await WhatsAppInstances[req.query.key].sendButtonMessage(
-        req.body.id,
-        req.body.btndata
-    )
-    return res.status(201).json({ error: false, data: data })
+    try {
+        console.log('📌 Recebendo requisição de botão:', {
+            id: req.body.id,
+            btndata: req.body.btndata.buttons
+        })
+        
+        const instance = WhatsAppInstances[req.query.key]
+        
+        if (!instance) {
+            return res.status(404).json({ error: true, message: 'Instance not found' })
+        }
+        
+        if (!instance.instance?.online) {
+            return res.status(400).json({ error: true, message: 'Instance not online' })
+        }
+        
+        // O btndata deve ter a estrutura esperada pelo sendButtonMessage
+        const data = await instance.sendButtonMessage(
+            req.body.id,
+            req.body.btndata // Deve conter: { text, footerText, buttons }
+        )
+        
+        return res.status(201).json({ 
+            error: false, 
+            data: data,
+            message: 'Button sent successfully' 
+        })
+    } catch (error) {
+        console.error('❌ Erro ao enviar botão:', error)
+        return res.status(500).json({ 
+            error: true, 
+            message: error.message 
+        })
+    }
 }
 
 exports.Contact = async (req, res) => {
@@ -210,12 +226,53 @@ exports.List = async (req, res) => {
     return res.status(201).json({ error: false, data: data })
 }
 
+// exports.MediaButton = async (req, res) => {
+//     const data = await WhatsAppInstances[req.query.key].sendMediaButtonMessage(
+//         req.body.id,
+//         req.body.btndata
+//     )
+//     return res.status(201).json({ error: false, data: data })
+// }
+
 exports.MediaButton = async (req, res) => {
-    const data = await WhatsAppInstances[req.query.key].sendMediaButtonMessage(
-        req.body.id,
-        req.body.btndata
-    )
-    return res.status(201).json({ error: false, data: data })
+    try {
+        console.log('🖼️ Recebendo requisição de media button:', {
+            id: req.body.id,
+            btndata: req.body.btndata
+        })
+        
+        const instance = WhatsAppInstances[req.query.key]
+        
+        if (!instance) {
+            return res.status(404).json({ error: true, message: 'Instance not found' })
+        }
+        
+        // O btndata para media button deve conter:
+        // {
+        //   mediaType: 'image' | 'video',
+        //   image: 'url-da-imagem',
+        //   text: 'caption',
+        //   footerText: 'rodapé',
+        //   buttons: array de botões
+        // }
+        
+        const data = await instance.sendMediaButtonMessage(
+            req.body.id,
+            req.body.btndata
+        )
+        
+        return res.status(201).json({ 
+            error: false, 
+            data: data,
+            message: 'Media button sent successfully' 
+        })
+    } catch (error) {
+        console.error('❌ Erro ao enviar media button:', error)
+        return res.status(500).json({ 
+            error: true, 
+            message: error.message 
+        })
+    }
 }
 
 exports.SetStatus = async (req, res) => {

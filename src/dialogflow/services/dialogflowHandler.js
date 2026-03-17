@@ -1,5 +1,6 @@
 const dialogflow = require('@google-cloud/dialogflow')
 const { v4: uuidv4 } = require('uuid')
+const logger = require('../../api/utils/console')
 
 class DialogflowHandler {
     constructor() {
@@ -9,7 +10,7 @@ class DialogflowHandler {
         this.languageCode = process.env.DF_LANGUAGE_CODE || 'pt-BR'
 
         if (!this.projectId || !this.privateKey || !this.clientEmail) {
-            console.warn('⚠️ Variáveis do Dialogflow não configuradas')
+            logger.warn('⚠️ Variáveis do Dialogflow não configuradas')
             this.enabled = false
             return
         }
@@ -24,16 +25,16 @@ class DialogflowHandler {
                 projectId: this.projectId,
             })
             this.enabled = true
-            console.log('✅ DialogflowHandler inicializado')
+            logger.info('DialogflowHandler inicializado')
         } catch (error) {
-            console.error('❌ Erro ao inicializar Dialogflow:', error)
+            logger.error('❌ Erro ao inicializar Dialogflow:', error)
             this.enabled = false
         }
     }
 
     async processMessage(messageData) {
         if (!this.enabled) {
-            console.log('⏭️ Dialogflow desativado')
+            logger.warn('⏭️ Dialogflow desativado')
             return {
                 success: false,
                 error: 'Dialogflow not configured',
@@ -75,7 +76,7 @@ class DialogflowHandler {
             return allResponses;
        
         } catch (error) {
-            console.error('❌ Erro no Dialogflow:', error)
+            logger.error('Erro no Dialogflow:', error)
             return {
                 success: false,
                 error: error.message,
@@ -122,45 +123,12 @@ class DialogflowHandler {
         }
     }
 
-    // async processWelcomeEvent(senderId) {
-    //     if (!this.enabled) return null
-
-    //     try {
-    //         const sessionPath = this.sessionClient.projectAgentSessionPath(
-    //             this.projectId,
-    //             senderId
-    //         )
-
-    //         const request = {
-    //             session: sessionPath,
-    //             queryInput: {
-    //                 event: {
-    //                     name: 'WELCOME',
-    //                     languageCode: 'pt-BR',
-    //                 },
-    //             },
-    //         }
-
-    //         const responses = await this.sessionClient.detectIntent(request)
-    //         const result = responses[0].queryResult
-
-    //         return {
-    //             success: true,
-    //             response: result.fulfillmentText,
-    //         }
-    //     } catch (error) {
-    //         console.error('❌ Erro no evento WELCOME:', error)
-    //         return null
-    //     }
-    // }
-
     extractAllResponses(queryResult) {
+
         const responses = []
 
-        if (
-            queryResult.fulfillmentMessages &&
-            Array.isArray(queryResult.fulfillmentMessages)
-        ) {
+        if (queryResult.fulfillmentMessages && Array.isArray(queryResult.fulfillmentMessages)) {
+            const intent = queryResult.intent?.displayName
             queryResult.fulfillmentMessages.forEach((msg, index) => {
                 switch (msg.platform) {
                     case 'PLATFORM_UNSPECIFIED': {
@@ -173,6 +141,7 @@ class DialogflowHandler {
                                     source: 'fulfillmentMessages.text',
                                     index: index,
                                     textIndex: textIndex,
+                                    intent: intent,
                                 })
                             }
                         })
@@ -185,13 +154,14 @@ class DialogflowHandler {
                             content: msg.payload,
                             source: 'fulfillmentMessages.payload',
                             index: index,
+                            intent: intent,
                         })
                         break
                     }
 
                     default: {
-                        console.log(
-                            `   ℹ️ Item ${index}: tipo não processado - ${msg.platform}`
+                        logger.warn(
+                            `Item ${index}: tipo não processado - ${msg.platform}`
                         )
                         break
                     }
@@ -210,7 +180,7 @@ class DialogflowHandler {
                     source: 'fulfillmentText',
                 })
             } else {
-                console.log('⚠️ Nenhuma resposta encontrada')
+                logger.warn('Nenhuma resposta encontrada')
             }
         }
         return responses
