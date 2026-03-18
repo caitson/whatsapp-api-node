@@ -13,13 +13,10 @@ const Chat = require('../models/chat.model')
 const axios = require('axios')
 const config = require('../../config/config')
 const downloadMessage = require('../helper/downloadMsg')
-// const logger = require('pino')()
 const logger = require('../../api/utils/console')
 const useMongoDBAuthState = require('../helper/mongoAuthState')
 const DialogflowHandler = require('../../dialogflow/services/dialogflowHandler')
 const Message = require('../models/message.model')
-
-const { Server } = require('socket.io')
 
 class WhatsAppInstance {
     socketConfig = {
@@ -63,14 +60,10 @@ class WhatsAppInstance {
     })
 
     constructor(key, allowWebhook, webhook, options = {}, io) {
-        console.log('🔧 WhatsAppInstance constructor:', {
-            key,
-            hasIo: !!io, // Deve ser true
-            ioAvailable: io ? '✅' : '❌',
-        })
-
+        const globalIo = io || global.io
         this.key = key ? key : uuidv4()
-        this.io = io
+        //this.description = options?.description || `Instância ${this.key}`
+        this.io = globalIo
         this.instance.customWebhook = this.webhook ? this.webhook : webhook
         this.allowWebhook = config.webhookEnabled
             ? config.webhookEnabled
@@ -92,6 +85,8 @@ class WhatsAppInstance {
         this.metadata = options.metadata || {}
         this.settings = { ...this.settings, ...options.settings }
 
+        this.shouldConnect = false; 
+
         if (this.allowWebhook && this.instance.customWebhook !== null) {
             this.allowWebhook = true
             this.instance.customWebhook = webhook
@@ -99,9 +94,16 @@ class WhatsAppInstance {
                 baseURL: webhook,
             })
         }
+
+        console.log('🔧 WhatsAppInstance constructor:', {
+            key,
+            hasIo: !!io, // Deve ser true
+            ioAvailable: this.io ? '✅' : '❌',
+            ioSource: io ? 'parameter' : global.io ? 'global' : 'none',
+        })
     }
 
-    async init() {
+    async init(connect = false) {
         this.collection = global.mongoClient
             .db('whatsapp-api')
             .collection(this.key)
@@ -110,24 +112,114 @@ class WhatsAppInstance {
         this.socketConfig.auth = this.authState.state
         this.socketConfig.browser = Object.values(config.browser)
         this.instance.sock = makeWASocket(this.socketConfig)
+
+        this.instance.sock = makeWASocket({
+            ...this.socketConfig,
+            // ⚠️ Configuração para não conectar automaticamente
+            shouldSync: false,
+            connectTimeoutMs: undefined,
+        })
+
         this.setHandler()
+        
+        console.log('Connect :: ',connect)
+
+        if (connect) {    
+            await this.connect()
+        }
         return this
+    }
+
+    async connect() {
+        if (this.shouldConnect) {
+            console.log(`⏸️ ${this.key} já está conectando...`)
+            return
+        }
+
+        console.log(`🔌 Conectando ${this.key}...`)
+        this.shouldConnect = true
+        this.instance.qrRetry = 0
+        this.instance.qr = ''
+
+        // Força reconexão do socket
+        if (this.instance.sock) {
+            this.instance.sock.end()
+            this.instance.sock = makeWASocket(this.socketConfig)
+            this.setHandler()
+        }
+
+        return this.instance.sock
+    }
+
+    // // 🟢 NOVO: Verificar se pode gerar QR
+    // canGenerateQR(): boolean {
+    //     return this.shouldConnect && !this.instance.online
+    // }
+
+    // 🟢 NOVO: Obter QR atual
+    async getQRCode() {
+        // Se não deve conectar, retorna waiting
+        if (!this.shouldConnect) {
+            return {
+                qrcode: null,
+                status: 'inactive',
+                message: 'Clique em "Conectar" para gerar QR Code',
+            }
+        }
+
+        // Se já está online
+        if (this.instance.online) {
+            return {
+                qrcode: null,
+                status: 'connected',
+                message: 'Instância já está conectada',
+            }
+        }
+
+        // Se tem QR válido
+        if (
+            this.instance.qr &&
+            this.instance.qrRetry < config.instance.maxRetryQr
+        ) {
+            return {
+                qrcode: this.instance.qr,
+                status: 'ready',
+                message: 'QR Code gerado',
+                retry: this.instance.qrRetry,
+            }
+        }
+
+        // Se expirou
+        if (this.instance.qrRetry >= config.instance.maxRetryQr) {
+            return {
+                qrcode: null,
+                status: 'expired',
+                message: 'QR Code expirou. Clique em "Reconectar"',
+            }
+        }
+
+        // Aguardando
+        return {
+            qrcode: null,
+            status: 'waiting',
+            message: 'Aguardando QR Code...',
+        }
     }
 
     setHandler() {
         const sock = this.instance.sock
         // on credentials update save state
-        sock?.ev.on('creds.update', this.authState.saveCreds)
+        sock?.ev.on('creds.update', async (update) => {
+            console.log(
+                'Credentials updated, saving state to MongoDB...',
+                update
+            )
+            await this.authState.saveCreds()
+        })
 
         // on socket closed, opened, connecting
         sock?.ev.on('connection.update', async (update) => {
-            //console.log('Connection update:', update)
             const { connection, lastDisconnect, qr } = update
-
-            if (qr) {
-                global.io.emit(`instance:${this.key}:qr`, { qr })
-            }
-
             global.io.emit(`instance:${this.key}:status`, {
                 connection,
                 timestamp: new Date().toISOString(),
@@ -136,11 +228,9 @@ class WhatsAppInstance {
             if (connection === 'connecting') return
 
             if (connection === 'close') {
-                // reconnect if not logged out
-
+    
                 const statusCode = lastDisconnect?.error?.output?.statusCode
 
-                // Verifica se foi logged out
                 if (statusCode === DisconnectReason.loggedOut) {
                     console.log(`🔴 Instância ${this.key} desvinculada!`)
 
@@ -200,6 +290,8 @@ class WhatsAppInstance {
                         this.key
                     )
             } else if (connection === 'open') {
+                await this.updateInstanceStatusInDb(this.key, 'connected')
+
                 global.io.emit(`instance:${this.key}:connected`, {
                     timestamp: new Date().toISOString(),
                 })
@@ -231,27 +323,45 @@ class WhatsAppInstance {
                     )
             }
 
-            if (qr) {
-                QRCode.toDataURL(qr).then((url) => {
-                    this.instance.qr = url
-                    this.instance.qrRetry++
-                    if (this.instance.qrRetry >= config.instance.maxRetryQr) {
-                        // close WebSocket connection
-                        this.instance.sock.ws.close()
-                        // remove all events
-                        this.instance.sock.ev.removeAllListeners()
-                        this.instance.qr = ' '
-                        this.instance.messages = 'QR Code expired'
-                        logger.info('socket connection terminated')
+            if (qr && !this.instance.online) {
+                //console.log(`🔵 QR Code recebido para ${this.key}, gerando imagem...`)
+                QRCode.toDataURL(qr)
+                    .then((url) => {
+                        this.instance.qr = url
+                        this.instance.qrRetry++
+                        console.log(
+                            `✅ QR Code generated for ${this.key} (Attempt ${this.instance.qrRetry})`
+                        )
 
-                        global.io.emit(`instance:${this.key}:qr_expired`, {
-                            instanceId: this.key,
-                            reason: 'Code QR expirado',
-                            timestamp: new Date().toISOString(),
-                            action: 'reload_list',
+                        console.log('QrCode :: ', url)
+
+                        global.io.emit(`instance:${this.key}:qr`, {
+                            qr: url,
+                            attempt: this.instance.qrRetry,
                         })
-                    }
-                })
+
+                        if (
+                            this.instance.qrRetry >= config.instance.maxRetryQr
+                        ) {
+                            // close WebSocket connection
+                            this.instance.sock.ws.close()
+                            // remove all events
+                            this.instance.sock.ev.removeAllListeners()
+                            this.instance.qr = ' '
+                            this.instance.messages = 'QR Code expired'
+                            logger.info('socket connection terminated')
+
+                            global.io.emit(`instance:${this.key}:qr_expired`, {
+                                instanceId: this.key,
+                                reason: 'Code QR expirado',
+                                timestamp: new Date().toISOString(),
+                                action: 'reload_list',
+                            })
+                        }
+                    })
+                    .catch((err) => {
+                        console.error('Error generating QR base64:', err)
+                    })
             }
         })
 
@@ -464,7 +574,7 @@ class WhatsAppInstance {
 
     // Método para notificação manual (se precisar)
     notifyLogout(reason = 'unknown') {
-        this.io.emit(`instance:${this.key}:logged_out`, {
+        global.io.emit(`instance:${this.key}:logged_out`, {
             instanceId: this.key,
             reason,
             timestamp: new Date().toISOString(),
@@ -911,7 +1021,7 @@ class WhatsAppInstance {
         return status
     }
 
-    async sendButtonMessage(to, data) { 
+    async sendButtonMessage(to, data) {
         await this.verifyId(this.getWhatsAppId(to))
         const result = await this.instance.sock?.sendMessage(
             this.getWhatsAppId(to),
@@ -1575,6 +1685,24 @@ class WhatsAppInstance {
             return message
         } catch (error) {
             console.error('Erro ao salvar mensagem:', error)
+        }
+    }
+
+    async updateInstanceStatusInDb(status) {
+        try {
+            const db = global.mongoClient.db('whatsapp-api')
+            await db.collection('instances').updateOne(
+                { key: this.key },
+                {
+                    $set: {
+                        status,
+                        updatedAt: new Date().toISOString(),
+                    },
+                }
+            )
+            console.log(`📝 Instância ${this.key} atualizada: ${status}`)
+        } catch (error) {
+            console.error(`❌ Erro ao atualizar status:`, error)
         }
     }
 }

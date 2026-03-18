@@ -2,30 +2,115 @@ const { WhatsAppInstance } = require('../class/instance')
 const fs = require('fs')
 const path = require('path')
 const config = require('../../config/config')
-const { Session } = require('../class/session')
 const Message = require('../models/message.model')
+
+const { Session } = require('../class/session')
+const consoleLogger = require('../utils/console')
+const session = new Session()
+
+// exports.init = async (req, res) => {
+//     const key = req.query.key
+//     const webhook = !req.query.webhook ? false : req.query.webhook
+//     const webhookUrl = !req.query.webhookUrl ? null : req.query.webhookUrl
+//     const appUrl = config.appUrl || req.protocol + '://' + req.headers.host
+//     const instance = new WhatsAppInstance(key, webhook, webhookUrl, global.io)
+    
+//     if (WhatsAppInstances[key]) {
+//         return res.status(400).json({
+//             error: true,
+//             message: `Instância ${key} já existe`,
+//         })
+//     }
+
+//     try {
+//     await session.registerInstance(key, {
+//         webhook,
+//         webhookUrl,
+//         status: 'initializing',
+//         createdAt: new Date().toISOString(),
+//     })
+//     } catch (error) {
+//         return res.status(500).json({
+//             error: true,
+//             message: 'Erro ao registrar instância',
+//             details: error.message,
+//         })
+//     }
+
+//     const data = await instance.init()
+//     WhatsAppInstances[data.key] = instance
+//     await session.updateInstanceStatus(key, 'awaiting_scan')
+//     res.json({
+//         error: false,
+//         message: 'Initializing successfully',
+//         key: data.key,
+//         webhook: {
+//             enabled: webhook,
+//             webhookUrl: webhookUrl,
+//         },
+//         qrcode: {
+//             url: appUrl + '/instance/qr?key=' + data.key,
+//         },
+//         browser: config.browser,
+//     })
+// }
 
 exports.init = async (req, res) => {
     const key = req.query.key
+    //const description = req.query.description || `Instância ${key}` 
     const webhook = !req.query.webhook ? false : req.query.webhook
     const webhookUrl = !req.query.webhookUrl ? null : req.query.webhookUrl
     const appUrl = config.appUrl || req.protocol + '://' + req.headers.host
-    const instance = new WhatsAppInstance(key, webhook, webhookUrl)
-    const data = await instance.init()
-    WhatsAppInstances[data.key] = instance
-    res.json({
-        error: false,
-        message: 'Initializing successfully',
-        key: data.key,
-        webhook: {
-            enabled: webhook,
-            webhookUrl: webhookUrl,
-        },
-        qrcode: {
-            url: appUrl + '/instance/qr?key=' + data.key,
-        },
-        browser: config.browser,
-    })
+
+    if (WhatsAppInstances[key]) {
+        return res.status(400).json({
+            error: true,
+            message: `Instância ${key} já existe`,
+        })
+    }
+
+    try {
+        const instance = new WhatsAppInstance(key, webhook, webhookUrl, global.io)
+        const data = await instance.init(false)
+
+        consoleLogger.log('DATA :: ',data)
+
+        WhatsAppInstances[data.key] = instance
+
+        await session.registerInstance(key, {
+            webhook,
+            webhookUrl,
+            status: 'created',
+            createdAt: new Date().toISOString(),
+        })
+
+        res.json({
+            error: false,
+            message: 'Initializing successfully',
+            key: data.key,
+            webhook: {
+                enabled: webhook,
+                webhookUrl: webhookUrl,
+            },
+            qrcode: {
+                url: appUrl + '/instance/qr?key=' + data.key,
+            },
+            browser: config.browser,
+        })
+
+    } catch (error) {
+
+        if (WhatsAppInstances[key]) {
+            delete WhatsAppInstances[key]
+        }
+        
+        console.error('❌ Erro ao inicializar instância:', error)
+        return res.status(500).json({
+            error: true,
+            message: 'Erro ao criar instância',
+            details: error.message,
+        })
+    }
 }
 
 exports.qr = async (req, res) => {
@@ -34,28 +119,88 @@ exports.qr = async (req, res) => {
         res.render('qrcode', {
             qrcode: qrcode,
         })
-    } catch (error){
-        console.log('qrcode Error::: >>',error)
+    } catch (error) {
+        console.log('qrcode Error::: >>', error)
         res.json({
             qrcode: '',
-        }) 
+        })
     }
 }
 
+// exports.qrbase64 = async (req, res) => {
+//     try {
+//         const qrcode = await WhatsAppInstances[req.query.key]?.instance.qr
+//         res.json({
+//             error: false,
+//             message: 'QR Base64 fetched successfully',
+//             qrcode: qrcode,
+//         })
+//     } catch (error) {
+//         console.log('QRCODE qrbase64: error :::>', error)
+//         res.json({
+//             qrcode: '',
+//         })
+//     }
+// }
+
+// instance.controller.js
 exports.qrbase64 = async (req, res) => {
     try {
-        console.log('req.query.key :: ',req.query.key)
-        const qrcode = await WhatsAppInstances[req.query.key]?.instance.qr
-        console.log('qrcode :: ',qrcode)
+        const instance = WhatsAppInstances[req.query.key]
+        
+        if (!instance) {
+            return res.status(404).json({
+                error: true,
+                message: 'Instância não encontrada',
+                qrcode: ''
+            })
+        }
+
+        const qrcode = instance.instance?.qr || ''
+        const qrRetry = instance.instance?.qrRetry || 0
+        const maxRetry = config.instance?.maxRetryQr || 3
+        const isOnline = instance.instance?.online || false
+        
+        // 🟢 Se já está online, não precisa de QR
+        if (isOnline) {
+            return res.json({
+                error: false,
+                message: 'Instância já está conectada',
+                qrcode: '',
+                status: 'connected',
+                isOnline: true
+            })
+        }
+
+        // 🟢 Se excedeu tentativas, informa que expirou
+        if (qrRetry >= maxRetry) {
+            return res.json({
+                error: false,
+                message: 'QR Code expirado. Clique em "Tentar Novamente" para reiniciar.',
+                qrcode: '',
+                status: 'expired',
+                qrRetry,
+                maxRetry
+            })
+        }
+
+        // 🟢 QR válido ou aguardando
         res.json({
             error: false,
-            message: 'QR Base64 fetched successfully',
+            message: qrcode ? 'QR Code gerado' : 'Aguardando QR Code...',
             qrcode: qrcode,
+            status: qrcode ? 'ready' : 'waiting',
+            qrRetry,
+            maxRetry
         })
-    } catch(error) {
-        console.log("QRCODE qrbase64: error :::>",error)
+
+    } catch (error) {
+        console.error('❌ Erro no qrbase64:', error)
         res.json({
+            error: true,
+            message: 'Erro ao obter QR Code',
             qrcode: '',
+            status: 'error'
         })
     }
 }
@@ -119,7 +264,6 @@ exports.delete = async (req, res) => {
 }
 
 exports.list = async (req, res) => {
-
     if (req.query.active) {
         let instance = []
         const db = global.mongoClient.db('whatsapp-api')
@@ -140,7 +284,7 @@ exports.list = async (req, res) => {
         WhatsAppInstances[key].getInstanceDetail(key)
     )
     let data = await Promise.all(instance)
-    
+
     return res.json({
         error: false,
         message: 'All instance listed',
@@ -150,32 +294,29 @@ exports.list = async (req, res) => {
 
 exports.messages = async (req, res) => {
     try {
-    const { key, remoteJid, limit = 50, page = 1 } = req.query;
-    
-    const query = {};
-    if (key) query.key = key;
-    if (remoteJid) query.remoteJid = remoteJid;
-    
-    const messages = await Message.find(query)
-      .sort({ timestamp: -1 })
-      .limit(parseInt(limit))
-      .skip((parseInt(page) - 1) * parseInt(limit));
-    
-    const total = await Message.countDocuments(query);
-    console.log('Total messages found: ', total)
-    res.json({
-      data: messages,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / parseInt(limit))
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+        const { key, remoteJid, limit = 50, page = 1 } = req.query
+
+        const query = {}
+        if (key) query.key = key
+        if (remoteJid) query.remoteJid = remoteJid
+
+        const messages = await Message.find(query)
+            .sort({ timestamp: -1 })
+            .limit(parseInt(limit))
+            .skip((parseInt(page) - 1) * parseInt(limit))
+
+        const total = await Message.countDocuments(query)
+        console.log('Total messages found: ', total)
+        res.json({
+            data: messages,
+            pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total,
+                pages: Math.ceil(total / parseInt(limit)),
+            },
+        })
+    } catch (error) {
+        res.status(500).json({ error: error.message })
+    }
 }
-
-
-//f9d48e6c-4efb-426f-a60c-619267ba584e
