@@ -18,6 +18,8 @@ const useMongoDBAuthState = require('../helper/mongoAuthState')
 const DialogflowHandler = require('../../dialogflow/services/dialogflowHandler')
 const Message = require('../models/message.model')
 
+const DialogFlowConfig = require('../../api/models/dialogflow.mode')
+
 class WhatsAppInstance {
     socketConfig = {
         defaultQueryTimeoutMs: undefined,
@@ -74,7 +76,11 @@ class WhatsAppInstance {
         this.createdAt = options.createdAt || new Date().toISOString()
         this.vinculatedDate = options.vinculatedDate || null
 
-        this.dialogflow = new DialogflowHandler()
+        //this.dialogflow = new DialogflowHandler()
+        this.dialogflowHandler = null
+        this.maxRetry = config.instance?.maxRetryQr || 3
+        this.sessionDir = path.join(__dirname, '../../sessions', key)
+
         this.botResponsesTimestamps = new Map()
 
         this.instance.vinculatedDate = this.vinculatedDate
@@ -101,9 +107,12 @@ class WhatsAppInstance {
             ioAvailable: this.io ? '✅' : '❌',
             ioSource: io ? 'parameter' : global.io ? 'global' : 'none',
         })
+
+         // Inicializa o DialogflowHandler de forma assíncrona
+        this.initializeDialogflow()
     }
 
-    async init(connect = false) {
+    async init() {
         this.collection = global.mongoClient
             .db('whatsapp-api')
             .collection(this.key)
@@ -113,112 +122,19 @@ class WhatsAppInstance {
         this.socketConfig.browser = Object.values(config.browser)
         this.instance.sock = makeWASocket(this.socketConfig)
 
-        this.instance.sock = makeWASocket({
-            ...this.socketConfig,
-            // ⚠️ Configuração para não conectar automaticamente
-            shouldSync: false,
-            connectTimeoutMs: undefined,
-        })
-
         this.setHandler()
-        
-        console.log('Connect :: ',connect)
 
-        if (connect) {    
-            await this.connect()
-        }
         return this
-    }
-
-    async connect() {
-        if (this.shouldConnect) {
-            console.log(`⏸️ ${this.key} já está conectando...`)
-            return
-        }
-
-        console.log(`🔌 Conectando ${this.key}...`)
-        this.shouldConnect = true
-        this.instance.qrRetry = 0
-        this.instance.qr = ''
-
-        // Força reconexão do socket
-        if (this.instance.sock) {
-            this.instance.sock.end()
-            this.instance.sock = makeWASocket(this.socketConfig)
-            this.setHandler()
-        }
-
-        return this.instance.sock
-    }
-
-    // // 🟢 NOVO: Verificar se pode gerar QR
-    // canGenerateQR(): boolean {
-    //     return this.shouldConnect && !this.instance.online
-    // }
-
-    // 🟢 NOVO: Obter QR atual
-    async getQRCode() {
-        // Se não deve conectar, retorna waiting
-        if (!this.shouldConnect) {
-            return {
-                qrcode: null,
-                status: 'inactive',
-                message: 'Clique em "Conectar" para gerar QR Code',
-            }
-        }
-
-        // Se já está online
-        if (this.instance.online) {
-            return {
-                qrcode: null,
-                status: 'connected',
-                message: 'Instância já está conectada',
-            }
-        }
-
-        // Se tem QR válido
-        if (
-            this.instance.qr &&
-            this.instance.qrRetry < config.instance.maxRetryQr
-        ) {
-            return {
-                qrcode: this.instance.qr,
-                status: 'ready',
-                message: 'QR Code gerado',
-                retry: this.instance.qrRetry,
-            }
-        }
-
-        // Se expirou
-        if (this.instance.qrRetry >= config.instance.maxRetryQr) {
-            return {
-                qrcode: null,
-                status: 'expired',
-                message: 'QR Code expirou. Clique em "Reconectar"',
-            }
-        }
-
-        // Aguardando
-        return {
-            qrcode: null,
-            status: 'waiting',
-            message: 'Aguardando QR Code...',
-        }
     }
 
     setHandler() {
         const sock = this.instance.sock
-        // on credentials update save state
         sock?.ev.on('creds.update', async (update) => {
-            console.log(
-                'Credentials updated, saving state to MongoDB...',
-                update
-            )
             await this.authState.saveCreds()
         })
 
-        // on socket closed, opened, connecting
         sock?.ev.on('connection.update', async (update) => {
+            console.log("connection.update :: ",update)
             const { connection, lastDisconnect, qr } = update
             global.io.emit(`instance:${this.key}:status`, {
                 connection,
@@ -290,7 +206,7 @@ class WhatsAppInstance {
                         this.key
                     )
             } else if (connection === 'open') {
-                await this.updateInstanceStatusInDb(this.key, 'connected')
+                //await this.updateInstanceStatusInDb(this.key, 'connected')
 
                 global.io.emit(`instance:${this.key}:connected`, {
                     timestamp: new Date().toISOString(),
@@ -462,7 +378,9 @@ class WhatsAppInstance {
             }
         })
 
-        sock?.ev.on('messages.update', async (messages) => {})
+        sock?.ev.on('messages.update', async (messages) => {
+            console.log("messages.update :: ",messages)
+        })
         sock?.ws.on('CB:call', async (data) => {
             if (data.content) {
                 if (data.content.find((e) => e.tag === 'offer')) {
@@ -590,6 +508,82 @@ class WhatsAppInstance {
                 instanceKey: key,
             })
             .catch(() => {})
+    }
+
+    async initializeDialogflow() {
+        try {
+            // Verifica se existe configuração no banco
+            const config = await DialogFlowConfig.findOne({ 
+                instance_key: this.key,
+                enabled: true 
+            })
+
+            if (config) {
+                // Se tem configuração própria, usa ela
+                this.dialogflow = new DialogflowHandler(this.key)
+                await this.dialogflow.loadInstanceConfig(this.key)
+                logger.info(`✅ Dialogflow configurado para instância ${this.key}`)
+            } else {
+                // Se não tem, usa configuração global (se disponível)
+                this.dialogflow = new DialogflowHandler()
+                if (this.dialogflow.isEnabled()) {
+                    logger.info(`✅ Dialogflow global configurado para instância ${this.key}`)
+                } else {
+                    logger.info(`ℹ️ Instância ${this.key} sem Dialogflow`)
+                }
+            }
+        } catch (error) {
+            logger.error(`❌ Erro ao inicializar Dialogflow para ${this.key}:`, error)
+            this.dialogflow = new DialogflowHandler() // Fallback para global
+        }
+    }
+
+    // async loadDialogFlowConfig() {
+    //     try {
+    //         const config = await DialogFlowConfig.findOne({ 
+    //             instance_key: this.key,
+    //             enabled: true 
+    //         })
+
+    //         if (config) {
+    //             this.dialogflowHandler = new DialogflowHandler(this.key)
+    //             // Aguarda o carregamento assíncrono da configuração
+    //             await this.dialogflowHandler.loadInstanceConfig(this.key)
+    //             logger.info(`✅ Dialogflow carregado para instância ${this.key}`)
+    //         } else {
+    //             logger.info(`ℹ️ Instância ${this.key} sem configuração Dialogflow`)
+    //             // Criar handler com fallback para configuração global
+    //             this.dialogflowHandler = new DialogflowHandler()
+    //         }
+    //     } catch (error) {
+    //         logger.error(`❌ Erro ao carregar Dialogflow para ${this.key}:`, error)
+    //         this.dialogflowHandler = new DialogflowHandler()
+    //     }
+    // }
+
+    async updateDialogFlowConfig(newConfig) {
+        try {
+            // Atualizar no banco de dados
+            await DialogFlowConfig.findOneAndUpdate(
+                { instance_key: this.key },
+                newConfig,
+                { upsert: true, new: true }
+            )
+
+            // Recarregar handler
+            if (this.dialogflowHandler) {
+                await this.dialogflowHandler.reloadConfig(this.key)
+            } else {
+                this.dialogflowHandler = new DialogflowHandler(this.key)
+                await this.dialogflowHandler.loadInstanceConfig(this.key)
+            }
+
+            logger.info(`✅ Configuração Dialogflow atualizada para ${this.key}`)
+            return true
+        } catch (error) {
+            logger.error(`❌ Erro ao atualizar Dialogflow para ${this.key}:`, error)
+            return false
+        }
     }
 
     async processMessageWithDialogflow(messageData) {

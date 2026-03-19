@@ -1,6 +1,7 @@
 function keyVerification(req, res, next) {
     const key = req.query['key']?.toString()
     if (!key) {
+        console.log("KKJKKKKKJ ::: ",key)
         return res
             .status(403)
             .send({ error: true, message: 'no key query was present' })

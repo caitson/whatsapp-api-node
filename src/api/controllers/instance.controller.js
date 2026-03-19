@@ -6,7 +6,8 @@ const Message = require('../models/message.model')
 
 const { Session } = require('../class/session')
 const consoleLogger = require('../utils/console')
-const session = new Session()
+
+const DialogFlowConfig = require('../../api/models/dialogflow.mode')
 
 // exports.init = async (req, res) => {
 //     const key = req.query.key
@@ -62,27 +63,18 @@ exports.init = async (req, res) => {
     const webhookUrl = !req.query.webhookUrl ? null : req.query.webhookUrl
     const appUrl = config.appUrl || req.protocol + '://' + req.headers.host
 
-    if (WhatsAppInstances[key]) {
-        return res.status(400).json({
-            error: true,
-            message: `Instância ${key} já existe`,
-        })
-    }
+    // if (WhatsAppInstances[key]) {
+    //     return res.status(400).json({
+    //         error: true,
+    //         message: `Instância ${key} já existe`,
+    //     })
+    // }
 
     try {
         const instance = new WhatsAppInstance(key, webhook, webhookUrl, global.io)
         const data = await instance.init(false)
 
-        consoleLogger.log('DATA :: ',data)
-
         WhatsAppInstances[data.key] = instance
-
-        await session.registerInstance(key, {
-            webhook,
-            webhookUrl,
-            status: 'created',
-            createdAt: new Date().toISOString(),
-        })
 
         res.json({
             error: false,
@@ -265,29 +257,36 @@ exports.delete = async (req, res) => {
 
 exports.list = async (req, res) => {
     if (req.query.active) {
-        let instance = []
         const db = global.mongoClient.db('whatsapp-api')
         const result = await db.listCollections().toArray()
-        result.forEach((collection) => {
-            console.log('Found collection: ', collection)
-            instance.push(collection.name)
-        })
+          const systemCollection = [
+            'chats',
+            'messages',
+            'users',
+            'sessions',
+            'auth',
+            'dialogflowconfigs',
+        ]
+        
+        const instances = result
+            .filter(collection => !systemCollection.includes(collection.name))
+            .map(collection => collection.name)
 
         return res.json({
             error: false,
             message: 'All active instance',
-            data: instance,
+            data: instances,
         })
     }
 
-    let instance = Object.keys(WhatsAppInstances).map(async (key) =>
+    const instancePromises = Object.keys(WhatsAppInstances).map(async (key) =>
         WhatsAppInstances[key].getInstanceDetail(key)
     )
-    let data = await Promise.all(instance)
 
+    const data = await Promise.all(instancePromises)
     return res.json({
         error: false,
-        message: 'All instance listed',
+        message: 'All instance.... listed',
         data: data,
     })
 }
@@ -320,3 +319,297 @@ exports.messages = async (req, res) => {
         res.status(500).json({ error: error.message })
     }
 }
+
+
+exports.saveDialogFlowConfig = async (req, res) => {
+    try {
+        const { key } = req.params
+        const {
+            googlePrivateKey,
+            googleClientEmail,
+            googleProjectId,
+            languageCode,
+            enabled
+        } = req.body
+
+        // Validações básicas
+        if (!googlePrivateKey || !googleClientEmail || !googleProjectId) {
+            return res.status(400).json({
+                error: true,
+                message: 'Credenciais do DialogFlow incompletas'
+            })
+        }
+
+        // Verificar se a instância existe
+        const instance = WhatsAppInstances[key]
+        if (!instance) {
+            return res.status(404).json({
+                error: true,
+                message: 'Instância não encontrada'
+            })
+        }
+
+        // Verificar se já existe configuração
+        const existing = await DialogFlowConfig.findOne({ instance_key: key })
+        if (existing) {
+            return res.status(400).json({
+                error: true,
+                message: 'Configuração já existe para esta instância'
+            })
+        }
+
+        // Criar nova configuração
+        const config = new DialogFlowConfig({
+            instance_key: key,
+            googlePrivateKey,
+            googleClientEmail,
+            googleProjectId,
+            languageCode: languageCode || 'pt',
+            enabled: enabled !== undefined ? enabled : true
+        })
+
+        await config.save()
+
+        // Atualizar a instância com a configuração (se necessário)
+        if (instance.instance) {
+            instance.instance.dialogflowConfig = config
+        }
+
+        res.json({
+            error: false,
+            message: 'Configuração do DialogFlow salva com sucesso',
+            data: {
+                instance_key: key,
+                googleProjectId: config.googleProjectId,
+                languageCode: config.languageCode,
+                enabled: config.enabled
+            }
+        })
+
+    } catch (error) {
+        console.error('❌ Erro ao salvar configuração DialogFlow:', error)
+        res.status(500).json({
+            error: true,
+            message: 'Erro ao salvar configuração',
+            details: error.message
+        })
+    }
+}
+
+
+exports.getDialogFlowConfig = async (req, res) => {
+    try {
+        const { key } = req.params
+
+        const config = await DialogFlowConfig.findOne({ instance_key: key })
+        
+        if (!config) {
+            return res.status(404).json({
+                error: true,
+                message: 'Configuração não encontrada para esta instância'
+            })
+        }
+
+        // Não enviar a chave privada completa por segurança
+        res.json({
+            error: false,
+            message: 'Configuração encontrada',
+            data: {
+                instance_key: config.instance_key,
+                googleProjectId: config.googleProjectId,
+                googleClientEmail: config.googleClientEmail,
+                languageCode: config.languageCode,
+                enabled: config.enabled,
+                hasPrivateKey: !!config.googlePrivateKey
+            }
+        })
+
+    } catch (error) {
+        console.error('❌ Erro ao buscar configuração DialogFlow:', error)
+        res.status(500).json({
+            error: true,
+            message: 'Erro ao buscar configuração',
+            details: error.message
+        })
+    }
+}
+
+exports.updateDialogFlowConfig = async (req, res) => {
+    try {
+        const { key } = req.params
+        const updateData = req.body
+
+        // Campos que podem ser atualizados
+        const allowedUpdates = [
+            'googlePrivateKey',
+            'googleClientEmail',
+            'googleProjectId',
+            'languageCode',
+            'enabled'
+        ]
+
+        // Filtrar apenas campos permitidos
+        const updates = {}
+        allowedUpdates.forEach(field => {
+            if (updateData[field] !== undefined) {
+                updates[field] = updateData[field]
+            }
+        })
+
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({
+                error: true,
+                message: 'Nenhum campo válido para atualização'
+            })
+        }
+
+        updates.updatedAt = Date.now()
+
+        const config = await DialogFlowConfig.findOneAndUpdate(
+            { instance_key: key },
+            updates,
+            { new: true }
+        )
+
+        if (!config) {
+            return res.status(404).json({
+                error: true,
+                message: 'Configuração não encontrada'
+            })
+        }
+
+        // Atualizar instância em memória
+        const instance = WhatsAppInstances[key]
+        if (instance?.instance) {
+            instance.instance.dialogflowConfig = config
+        }
+
+        res.json({
+            error: false,
+            message: 'Configuração atualizada com sucesso',
+            data: {
+                instance_key: config.instance_key,
+                googleProjectId: config.googleProjectId,
+                languageCode: config.languageCode,
+                enabled: config.enabled
+            }
+        })
+
+    } catch (error) {
+        console.error('❌ Erro ao atualizar configuração DialogFlow:', error)
+        res.status(500).json({
+            error: true,
+            message: 'Erro ao atualizar configuração',
+            details: error.message
+        })
+    }
+}
+
+exports.deleteDialogFlowConfig = async (req, res) => {
+    try {
+        const { key } = req.params
+
+        const result = await DialogFlowConfig.deleteOne({ instance_key: key })
+
+        if (result.deletedCount === 0) {
+            return res.status(404).json({
+                error: true,
+                message: 'Configuração não encontrada'
+            })
+        }
+
+        // Remover da instância em memória
+        const instance = WhatsAppInstances[key]
+        if (instance?.instance) {
+            delete instance.instance.dialogflowConfig
+        }
+
+        res.json({
+            error: false,
+            message: 'Configuração deletada com sucesso'
+        })
+
+    } catch (error) {
+        console.error('❌ Erro ao deletar configuração DialogFlow:', error)
+        res.status(500).json({
+            error: true,
+            message: 'Erro ao deletar configuração',
+            details: error.message
+        })
+    }
+}
+
+exports.checkDialogFlowConfig = async (req, res) => {
+    try {
+        const { key } = req.params
+
+        const config = await DialogFlowConfig.findOne({ instance_key: key })
+        
+        res.json({
+            error: false,
+            configured: !!config,
+            enabled: config?.enabled || false,
+            data: config ? {
+                googleProjectId: config.googleProjectId,
+                languageCode: config.languageCode,
+                enabled: config.enabled
+            } : null
+        })
+
+    } catch (error) {
+        console.error('❌ Erro ao verificar configuração DialogFlow:', error)
+        res.status(500).json({
+            error: true,
+            message: 'Erro ao verificar configuração',
+            details: error.message
+        })
+    }
+}
+
+exports.checkInstanceConfig = async (req, res) => {
+    try {
+        const { key } = req.params
+
+        // Verificar se instância existe
+        const instance = WhatsAppInstances[key]
+        const instanceExists = !!instance
+
+        // Verificar configuração DialogFlow
+        const dfConfig = await DialogFlowConfig.findOne({ instance_key: key })
+        const hasDialogFlow = !!dfConfig
+
+        // Verificar status da instância
+        let status = 'unknown'
+        let isOnline = false
+        
+        if (instance?.instance) {
+            status = instance.instance.connectionStatus || 'disconnected'
+            isOnline = instance.instance.online || false
+        }
+
+        res.json({
+            error: false,
+            instance_key: key,
+            instanceExists,
+            configured: hasDialogFlow,
+            dialogflow: {
+                configured: hasDialogFlow,
+                enabled: dfConfig?.enabled || false,
+                projectId: dfConfig?.googleProjectId
+            },
+            connection: {
+                status,
+                isOnline
+            }
+        })
+
+    } catch (error) {
+        console.error('❌ Erro ao verificar configuração da instância:', error)
+        res.status(500).json({
+            error: true,
+            message: 'Erro ao verificar configuração',
+            details: error.message
+        })
+    }
+}
+

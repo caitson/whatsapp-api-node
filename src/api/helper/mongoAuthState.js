@@ -7,6 +7,7 @@ const {
     generateRegistrationId,
 } = require('@whiskeysockets/baileys/lib/Utils/generics')
 const { randomBytes } = require('crypto')
+const consoleLogger = require('../utils/console')
 
 const initAuthCreds = () => {
     const identityKey = Curve.generateKeyPair()
@@ -57,7 +58,7 @@ const BufferJSON = {
     },
 }
 
-module.exports = useMongoDBAuthState = async (collection) => {
+const useMongoDBAuthState = async (collection) => {
     const writeData = (data, id) => {
         return collection.replaceOne(
             { _id: id },
@@ -76,7 +77,11 @@ module.exports = useMongoDBAuthState = async (collection) => {
     const removeData = async (id) => {
         try {
             await collection.deleteOne({ _id: id })
-        } catch (_a) {}
+        } catch (error) {
+            if (process.env.NODE_ENV === 'development') {
+                consoleLogger.warn(`⚠️ Erro ao remover ${id}:`, error.message)
+            }
+        }
     }
     const creds = (await readData('creds')) || (0, initAuthCreds)()
     return {
@@ -119,3 +124,5 @@ module.exports = useMongoDBAuthState = async (collection) => {
         },
     }
 }
+
+module.exports = useMongoDBAuthState

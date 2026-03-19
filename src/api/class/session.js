@@ -1,29 +1,36 @@
-/* eslint-disable no-unsafe-optional-chaining */
 const { WhatsAppInstance } = require('../class/instance')
 // const logger = require('pino')()
 const logger = require('../../api/utils/console')
 const config = require('../../config/config')
+const systemCollections = require('../../api/utils/constants')
 
 class Session {
-
     constructor() {
-        this.systemCollections = ['chats', 'messages', 'users', 'sessions', 'auth', 'instances']
+        this.systemCollection = [
+            'chats',
+            'messages',
+            'users',
+            'sessions',
+            'auth',
+            'dialogflowconfigs',
+        ]
+
         this.db = null
     }
 
     async restoreSessions() {
         const restoredSessions = []
-         this.db = global.mongoClient.db('whatsapp-api')
+        this.db = global.mongoClient.db('whatsapp-api')
 
         const collections = await this.db.listCollections().toArray()
 
         for (const collection of collections) {
             const key = collection.name
 
-             if (this.systemCollections.includes(key)) {
-                    logger.info(`⏭️ Ignorando coleção do sistema: ${key}`)
-                    continue
-                }
+            if (this.systemCollection.includes(key)) {
+                logger.info(`⏭️ Ignorando coleção do sistema: ${key}`)
+                continue
+            }
 
             const webhook = config.webhookEnabled ?? undefined
             const webhookUrl = config.webhookUrl ?? undefined
@@ -126,29 +133,30 @@ class Session {
     }
 
     async registerInstance(key, data) {
-        console.log('🔍 registerInstance INICIADO para:', key)
-        console.log('📦 Dados recebidos:', JSON.stringify(data, null, 2))
-
         try {
-            // 1. Verificar se global.mongoClient existe
             if (!global.mongoClient) {
                 logger.error('❌ MongoDB client não inicializado')
                 return false
             }
 
-            // 2. Conectar ao banco
             const db = global.mongoClient.db('whatsapp-api')
 
+            // 🟢 LOGS PARA DEBUG
+            console.log(`🔍 Verificando coleção para instância: ${key}`)
+
+            // Verifica se a coleção já existe
             const collections = await db.listCollections().toArray()
             const collectionNames = collections.map((c) => c.name)
+            const hasCollection = collectionNames.includes(key)
 
-            const hasInstances = collectionNames.includes('instances')
-
-            if (!hasInstances) {
-                await db.createCollection('instances')
+            // 🟢 CRIA COLEÇÃO SE NÃO EXISTIR
+            if (!hasCollection) {
+                console.log(`📦 Criando coleção ${key}...`)
+                await db.createCollection(key)
+                console.log(`✅ Coleção ${key} criada com sucesso`)
             }
 
-            // 5. Preparar dados para inserir
+            // Prepara dados para inserir
             const updateData = {
                 key,
                 webhook: data.webhook || false,
@@ -156,21 +164,34 @@ class Session {
                 status: data.status || 'pending',
                 createdAt: data.createdAt || new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
+                // 🟢 Campos adicionais úteis
+                instanceKey: key,
+                lastSeen: null,
+                metadata: data.metadata || {},
             }
 
-            await db
-                .collection('instances')
+            // 🟢 INSERE/ATUALIZA na coleção da instância
+            const result = await db
+                .collection(key)
                 .updateOne({ key }, { $set: updateData }, { upsert: true })
 
             logger.info(
-                `✅ Instância ${key} registrada no banco com status ${data.status}`
+                `✅ Instância ${key} registrada na coleção ${key} com status ${data.status}`
             )
+
+            console.log(`📊 Resultado:`, {
+                matchedCount: result.matchedCount,
+                modifiedCount: result.modifiedCount,
+                upsertedCount: result.upsertedCount,
+            })
+
             return true
         } catch (error) {
             logger.error(
                 `❌ Erro ao registrar instância ${key}:`,
                 error.message
             )
+            console.error('❌ Detalhes do erro:', error)
             return false
         }
     }
