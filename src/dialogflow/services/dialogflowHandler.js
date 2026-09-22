@@ -1,4 +1,4 @@
-// api/handlers/dialogflow.handler.js
+// dialogflow/services/dialogflowHandler.js
 const dialogflow = require('@google-cloud/dialogflow')
 const { v4: uuidv4 } = require('uuid')
 const logger = require('../../api/utils/console')
@@ -13,6 +13,7 @@ class DialogflowHandler {
         this.languageCode = 'pt-BR'
         this.sessionClient = null
         this.enabled = false
+        this.initialized = false
         
         // Se for uma instância específica, carrega a configuração dela
         if (instanceKey) {
@@ -35,6 +36,7 @@ class DialogflowHandler {
         if (!this.projectId || !this.privateKey || !this.clientEmail) {
             logger.warn('⚠️ Variáveis globais do Dialogflow não configuradas')
             this.enabled = false
+            this.initialized = false
             return
         }
 
@@ -78,19 +80,23 @@ class DialogflowHandler {
      */
     initializeClient() {
         try {
-            // Configura o cliente do Dialogflow
+            // Limpa as quebras de linha da chave privada
+            const formattedPrivateKey = this.privateKey.replace(/\\n/g, '\n')
+            
             this.sessionClient = new dialogflow.SessionsClient({
                 credentials: {
                     client_email: this.clientEmail,
-                    private_key: this.privateKey,
+                    private_key: formattedPrivateKey,
                 },
                 projectId: this.projectId,
             })
             this.enabled = true
+            this.initialized = true
             logger.info(`✅ Cliente Dialogflow inicializado para projeto: ${this.projectId}`)
         } catch (error) {
             logger.error('❌ Erro ao inicializar cliente Dialogflow:', error)
             this.enabled = false
+            this.initialized = false
         }
     }
 
@@ -106,11 +112,12 @@ class DialogflowHandler {
      * Processa mensagem recebida
      */
     async processMessage(messageData) {
-        if (!this.enabled) {
+        if (!this.enabled || !this.initialized) {
             logger.warn(`⏭️ Dialogflow desativado para instância ${this.instanceKey || 'global'}`)
             return {
                 success: false,
                 error: 'Dialogflow not configured',
+                responses: []
             }
         }
 
@@ -121,6 +128,7 @@ class DialogflowHandler {
                 return {
                     success: false,
                     error: 'No text to process',
+                    responses: []
                 }
             }
 
@@ -142,11 +150,11 @@ class DialogflowHandler {
                 },
             }
 
-            logger.info(`📤 Enviando para Dialogflow (${this.projectId}): ${text}`)
+            logger.info(`📤 [${this.projectId}] Enviando: ${text}`)
             const responses = await this.sessionClient.detectIntent(request)
             const result = responses[0].queryResult
 
-            logger.info(`📥 Resposta do Dialogflow: ${result.fulfillmentText}`)
+            logger.info(`📥 [${this.projectId}] Resposta: ${result.fulfillmentText}`)
             const allResponses = this.extractAllResponses(result)
 
             return {
@@ -154,7 +162,8 @@ class DialogflowHandler {
                 responses: allResponses,
                 intent: result.intent?.displayName,
                 confidence: result.intentDetectionConfidence,
-                projectId: this.projectId
+                projectId: this.projectId,
+                fulfillmentText: result.fulfillmentText
             }
        
         } catch (error) {
@@ -162,6 +171,7 @@ class DialogflowHandler {
             return {
                 success: false,
                 error: error.message,
+                responses: []
             }
         }
     }
@@ -273,42 +283,11 @@ class DialogflowHandler {
         return responses
     }
 
-    // Métodos auxiliares para processar diferentes tipos de mensagens
-    processTextMessage(msg, index, responses) {
-        const textMessages = msg.text?.text || []
-        if (textMessages.length > 0) {
-            logger.debug(
-                `📝 Encontrado ${textMessages.length} texto(s) no item ${index}`
-            )
-        }
-
-        textMessages.forEach((text, textIndex) => {
-            if (text && text.trim() !== '') {
-                responses.push({
-                    type: 'text',
-                    content: text,
-                    source: 'fulfillmentMessages.text',
-                    index: index,
-                    textIndex: textIndex,
-                })
-            }
-        })
-    }
-
-    processPayloadMessage(msg, index, responses) {
-        responses.push({
-            type: 'payload',
-            content: msg.payload,
-            source: 'fulfillmentMessages.payload',
-            index: index,
-        })
-    }
-
     /**
      * Verifica se o handler está ativo
      */
     isEnabled() {
-        return this.enabled
+        return this.enabled && this.initialized
     }
 
     /**
@@ -318,6 +297,7 @@ class DialogflowHandler {
         return {
             instanceKey: this.instanceKey,
             enabled: this.enabled,
+            initialized: this.initialized,
             projectId: this.projectId,
             languageCode: this.languageCode,
             configured: !!(this.projectId && this.privateKey && this.clientEmail)

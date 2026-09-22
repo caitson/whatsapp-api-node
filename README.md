@@ -10,43 +10,6 @@ Thank you once again for being a part of this journey. Keep building amazing thi
 
 Best regards,
 
-@salman0ansari 
-- mailto:salman0ansariii@gmail.com
-- https://telegram.dog/salman0ansari
-
-
-
-
-
-<h1 align="center"> whatsapp-api-nodejs Multi Device</h1>
-<div align="center">
-<p>
-<a href="#"><img title="skynet" src="https://img.shields.io/badge/whatsapp api nodejs Multi Device-black?style=for-the-badge" alt=""></a>
-</p>
-<p>
-<a href="https://github.com/salman0ansari"><img title="Author" src="https://img.shields.io/badge/Author-Mohd Salman Ansari-black.svg?style=for-the-badge&logo=github" alt=""></a>
-</p>
-<a href="https://github.com/salman0ansari?tab=followers"><img title="Followers" src="https://img.shields.io/github/followers/salman0ansari?color=black&style=flat-square" alt=""></a>
-<a href="https://github.com/salman0ansari/whatsapp-api-nodejs/stargazers"><img title="Stars" src="https://img.shields.io/github/stars/salman0ansari/whatsapp-api-nodejs?color=black&style=flat-square" alt=""></a>
-<a href="https://github.com/salman0ansari/whatsapp-api-nodejs/network/members"><img title="Forks" src="https://img.shields.io/github/forks/salman0ansari/whatsapp-api-nodejs?color=black&style=flat-square" alt=""></a>
-<a href="https://github.com/salman0ansari/whatsapp-api-nodejs/issues"><img title="Issues" src="https://img.shields.io/github/issues/salman0ansari/whatsapp-api-nodejs?color=black&style=flat-square" alt=""></a>
-<p>
-
-<a href="http://github.com/salman0ansari/whatsapp-api-nodejs"><img title="Hits" src="http://hits.dwyl.com/salman0ansari/whatsapp-api-nodejs.svg?style=flat-square"></a>
-<br>
-<a href="https://t.me/salman0ansari">
-<img src="https://img.shields.io/badge/Telegram-informational?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram Badge"/>
-</a>
-<a href="https://join.skype.com/invite/rI5pLf9YIvTA">
-<img src="https://img.shields.io/badge/Skype-00AFF0.svg?style=for-the-badge&logo=Skype&logoColor=white" alt="Skype Badge"/>
-</a>
-<br>
-
-</p>
-</div>
-
----
-
 An implementation of [Baileys](https://github.com/WhiskeySockets/Baileys) as a simple RESTful API service with multi device support just `download`, `install`, and `start` using, `simple` as that.
 
 # Libraries Used

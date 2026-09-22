@@ -51,6 +51,11 @@ const MARK_MESSAGES_READ = !!(
     process.env.MARK_MESSAGES_READ && process.env.MARK_MESSAGES_READ === 'true'
 )
 
+const N8N_WEBHOOK_URL= process.env.N8N_WEBHOOK_URL;
+const N8N_WEBHOOK_PATH = process.env.N8N_WEBHOOK_PATH;
+const N8N_TIMEOUT = parseInt(process.env.N8N_TIMEOUT);
+const N8N_TOKEN = process.env.N8N_TOKEN || '';
+
 module.exports = {
     port: PORT,
     token: TOKEN,
@@ -71,6 +76,12 @@ module.exports = {
             useNewUrlParser: true,
             useUnifiedTopology: true,
         },
+    },
+    n8n: {
+        webhookUrl: N8N_WEBHOOK_URL,
+        webhookPath: N8N_WEBHOOK_PATH,
+        timeout: N8N_TIMEOUT,
+        token: N8N_TOKEN,
     },
     browser: {
         platform: CLIENT_PLATFORM,

@@ -550,6 +550,8 @@ exports.checkDialogFlowConfig = async (req, res) => {
             configured: !!config,
             enabled: config?.enabled || false,
             data: config ? {
+                googlePrivateKey: config.googlePrivateKey,
+                googleClientEmail: config.googleClientEmail,
                 googleProjectId: config.googleProjectId,
                 languageCode: config.languageCode,
                 enabled: config.enabled

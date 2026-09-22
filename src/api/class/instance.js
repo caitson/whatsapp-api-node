@@ -91,7 +91,7 @@ class WhatsAppInstance {
         this.metadata = options.metadata || {}
         this.settings = { ...this.settings, ...options.settings }
 
-        this.shouldConnect = false; 
+        this.shouldConnect = false
 
         if (this.allowWebhook && this.instance.customWebhook !== null) {
             this.allowWebhook = true
@@ -108,7 +108,7 @@ class WhatsAppInstance {
             ioSource: io ? 'parameter' : global.io ? 'global' : 'none',
         })
 
-         // Inicializa o DialogflowHandler de forma assíncrona
+        // Inicializa o DialogflowHandler de forma assíncrona
         this.initializeDialogflow()
     }
 
@@ -134,7 +134,7 @@ class WhatsAppInstance {
         })
 
         sock?.ev.on('connection.update', async (update) => {
-            console.log("connection.update :: ",update)
+            console.log('connection.update :: ', update.connection)
             const { connection, lastDisconnect, qr } = update
             global.io.emit(`instance:${this.key}:status`, {
                 connection,
@@ -144,7 +144,6 @@ class WhatsAppInstance {
             if (connection === 'connecting') return
 
             if (connection === 'close') {
-    
                 const statusCode = lastDisconnect?.error?.output?.statusCode
 
                 if (statusCode === DisconnectReason.loggedOut) {
@@ -373,13 +372,14 @@ class WhatsAppInstance {
             }
 
             for (const msg of incomingMessages) {
+                console.log('msg : ',msg)
                 const messageType = this.getMessageType(msg.message)
                 await this.processMessageByType(msg, messageType)
             }
         })
 
         sock?.ev.on('messages.update', async (messages) => {
-            console.log("messages.update :: ",messages)
+            console.log('messages.update :: ', messages)
         })
         sock?.ws.on('CB:call', async (data) => {
             if (data.content) {
@@ -513,36 +513,43 @@ class WhatsAppInstance {
     async initializeDialogflow() {
         try {
             // Verifica se existe configuração no banco
-            const config = await DialogFlowConfig.findOne({ 
+            const config = await DialogFlowConfig.findOne({
                 instance_key: this.key,
-                enabled: true 
+                enabled: true,
             })
 
             if (config) {
                 // Se tem configuração própria, usa ela
                 this.dialogflow = new DialogflowHandler(this.key)
                 await this.dialogflow.loadInstanceConfig(this.key)
-                logger.info(`✅ Dialogflow configurado para instância ${this.key}`)
+                logger.info(
+                    `✅ Dialogflow configurado para instância ${this.key}`
+                )
             } else {
                 // Se não tem, usa configuração global (se disponível)
                 this.dialogflow = new DialogflowHandler()
                 if (this.dialogflow.isEnabled()) {
-                    logger.info(`✅ Dialogflow global configurado para instância ${this.key}`)
+                    logger.info(
+                        `✅ Dialogflow global configurado para instância ${this.key}`
+                    )
                 } else {
                     logger.info(`ℹ️ Instância ${this.key} sem Dialogflow`)
                 }
             }
         } catch (error) {
-            logger.error(`❌ Erro ao inicializar Dialogflow para ${this.key}:`, error)
+            logger.error(
+                `❌ Erro ao inicializar Dialogflow para ${this.key}:`,
+                error
+            )
             this.dialogflow = new DialogflowHandler() // Fallback para global
         }
     }
 
     // async loadDialogFlowConfig() {
     //     try {
-    //         const config = await DialogFlowConfig.findOne({ 
+    //         const config = await DialogFlowConfig.findOne({
     //             instance_key: this.key,
-    //             enabled: true 
+    //             enabled: true
     //         })
 
     //         if (config) {
@@ -578,10 +585,15 @@ class WhatsAppInstance {
                 await this.dialogflowHandler.loadInstanceConfig(this.key)
             }
 
-            logger.info(`✅ Configuração Dialogflow atualizada para ${this.key}`)
+            logger.info(
+                `✅ Configuração Dialogflow atualizada para ${this.key}`
+            )
             return true
         } catch (error) {
-            logger.error(`❌ Erro ao atualizar Dialogflow para ${this.key}:`, error)
+            logger.error(
+                `❌ Erro ao atualizar Dialogflow para ${this.key}:`,
+                error
+            )
             return false
         }
     }
@@ -592,14 +604,7 @@ class WhatsAppInstance {
         })
         try {
             const userId = messageData.key.remoteJid
-            const botLastResponse = this.botResponsesTimestamps.get(userId)
             const now = Date.now()
-
-            // if (botLastResponse && now - botLastResponse < 1000) {
-            //     console.log(
-            //         '⏳ Cooldown: resposta muito recente para este usuário'
-            //     )
-            // }
 
             await this.saveMessage({
                 instanceKey: this.key,
@@ -614,13 +619,32 @@ class WhatsAppInstance {
                 timestamp: new Date(messageData.messageTimestamp * 1000),
             })
 
+            if (!this.dialogflow || !this.dialogflow.isEnabled()) {
+                console.log(
+                    `⚠️ Dialogflow não disponível para instância ${this.key}`
+                )
+                return
+            }
+
             const dialogflowResult = await this.dialogflow.processMessage(
                 messageData
             )
 
-            const textResponses = dialogflowResult.filter(
-                (r) => r.type === 'text'
-            )
+            console.log('📥 Resultado do Dialogflow:', {
+                success: dialogflowResult.success,
+                hasResponses: dialogflowResult.responses?.length > 0,
+                intent: dialogflowResult.intent,
+                projectId: dialogflowResult.projectId,
+            })
+
+            if (!dialogflowResult.success) {
+                console.error('❌ Erro no Dialogflow:', dialogflowResult.error)
+                return
+            }
+
+            const textResponses =
+                dialogflowResult.responses?.filter((r) => r.type === 'text') ||
+                []
 
             if (textResponses.length === 0) {
                 return
@@ -886,6 +910,7 @@ class WhatsAppInstance {
     }
 
     getWhatsAppId(id) {
+        console.log("ID :: ",id)
         if (
             id.includes('@g.us') ||
             id.includes('@s.whatsapp.net') ||
@@ -894,7 +919,7 @@ class WhatsAppInstance {
         ) {
             return id
         }
-        // Limpa o número
+        
         let cleanId = id.replace(/[^\d-]/g, '')
 
         // Se tiver hífen, é grupo
