@@ -164,10 +164,8 @@ class WhatsAppInstance {
                         message: 'Uma instância foi desvinculada',
                     })
 
-                    // Limpa dados da instância
                     this.handleLogout()
                 } else {
-                    // Outros erros de conexão
                     const shouldReconnect =
                         statusCode !== DisconnectReason.loggedOut
                     global.io.emit(`instance:${this.key}:disconnected`, {
@@ -372,14 +370,14 @@ class WhatsAppInstance {
             }
 
             for (const msg of incomingMessages) {
-                console.log('msg : ',msg)
+                // console.log('msg : ',msg)
                 const messageType = this.getMessageType(msg.message)
                 await this.processMessageByType(msg, messageType)
             }
         })
 
         sock?.ev.on('messages.update', async (messages) => {
-            console.log('messages.update :: ', messages)
+            // console.log('messages.update :: ', messages)
         })
         sock?.ws.on('CB:call', async (data) => {
             if (data.content) {
@@ -599,9 +597,9 @@ class WhatsAppInstance {
     }
 
     async processMessageWithDialogflow(messageData) {
-        console.log('Message received, processing with Dialogflow...', {
-            messageData,
-        })
+        // console.log('Message received, processing with Dialogflow...', {
+        //     messageData,
+        // })
         try {
             const userId = messageData.key.remoteJid
             const now = Date.now()
@@ -650,9 +648,9 @@ class WhatsAppInstance {
                 return
             }
 
-            console.log(
-                `💬 Enviando ${textResponses.length} respostas de Dialogflow para ${userId}...`
-            )
+            // console.log(
+            //     `💬 Enviando ${textResponses.length} respostas de Dialogflow para ${userId}...`
+            // )
 
             for (let i = 0; i < textResponses.length; i++) {
                 const response = textResponses[i]
@@ -699,16 +697,16 @@ class WhatsAppInstance {
     }
 
     async sendDialogflowResponse(to, text, pushName) {
-        console.log(`=== SENDDIALOGFLOWRESPONSE METHOD ===`, {
-            to,
-            text,
-            pushName,
-        })
+        // console.log(`=== SENDDIALOGFLOWRESPONSE METHOD ===`, {
+        //     to,
+        //     text,
+        //     pushName,
+        // })
         try {
             const result = await this.sendTextMessage(to, text, pushName)
 
             if (result?.key?.id) {
-                console.log('✅ Mensagem enviada com ID:', result.key.id)
+                //console.log('✅ Mensagem enviada com ID:', result.key.id)
             } else {
                 console.log('✅ Mensagem enviada (sem ID retornado)')
             }
@@ -910,7 +908,7 @@ class WhatsAppInstance {
     }
 
     getWhatsAppId(id) {
-        console.log("ID :: ",id)
+        // console.log("ID :: ",id)
         if (
             id.includes('@g.us') ||
             id.includes('@s.whatsapp.net') ||
@@ -919,7 +917,7 @@ class WhatsAppInstance {
         ) {
             return id
         }
-        
+
         let cleanId = id.replace(/[^\d-]/g, '')
 
         // Se tiver hífen, é grupo

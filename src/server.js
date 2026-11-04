@@ -16,22 +16,21 @@ let io // Instância do Socket.io
 
 if (config.mongoose.enabled) {
     mongoose.set('strictQuery', true)
-    mongoose.connect(config.mongoose.url, config.mongoose.options).then(() => {
+    mongoose.connect(config.mongoose.url).then(() => {
         logger.info('Connected to MongoDB')
     })
 }
 
-// Criar servidor HTTP a partir do app Express
 server = http.createServer(app)
 
 // Configurar Socket.io
 io = new Server(server, {
     cors: {
-        origin: ['http://localhost:4200', 'http://localhost:4201'], // URLs do seu frontend Angular
+        origin: ['http://localhost:4200', 'http://localhost:4201'],
         methods: ['GET', 'POST'],
         credentials: true,
     },
-    transports: ['websocket', 'polling'], // Fallback para polling se websocket não funcionar
+    transports: ['websocket', 'polling'],
 })
 
 // Middleware de autenticação para Socket.io (opcional)

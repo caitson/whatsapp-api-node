@@ -150,11 +150,11 @@ class DialogflowHandler {
                 },
             }
 
-            logger.info(`📤 [${this.projectId}] Enviando: ${text}`)
+            //logger.info(`📤 [${this.projectId}] Enviando: ${text}`)
             const responses = await this.sessionClient.detectIntent(request)
             const result = responses[0].queryResult
 
-            logger.info(`📥 [${this.projectId}] Resposta: ${result.fulfillmentText}`)
+           // logger.info(`📥 [${this.projectId}] Resposta: ${result.fulfillmentText}`)
             const allResponses = this.extractAllResponses(result)
 
             return {
