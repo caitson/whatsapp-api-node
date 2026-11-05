@@ -14,19 +14,17 @@ class DialogflowHandler {
         this.sessionClient = null
         this.enabled = false
         this.initialized = false
-        
-        // Se for uma instância específica, carrega a configuração dela
-        if (instanceKey) {
-            this.loadInstanceConfig(instanceKey)
-        } else {
-            // Fallback para variáveis de ambiente (configuração global)
-            this.loadGlobalConfig()
-        }
     }
 
-    /**
-     * Carrega configuração global do .env
-     */
+    async init() {
+        if (this.instanceKey) {
+            await this.loadInstanceConfig(this.instanceKey)
+        } else {
+            this.loadGlobalConfig()
+        }
+        return this
+    }
+
     loadGlobalConfig() {
         this.projectId = process.env.GOOGLE_PROJECT_ID
         this.privateKey = process.env.GOOGLE_PRIVATE_KEY
@@ -43,19 +41,17 @@ class DialogflowHandler {
         this.initializeClient()
     }
 
-    /**
-     * Carrega configuração específica de uma instância do banco de dados
-     */
     async loadInstanceConfig(instanceKey) {
         try {
-            const config = await DialogFlowConfig.findOne({ 
+            const config = await DialogFlowConfig.findOne({
                 instance_key: instanceKey,
-                enabled: true 
+                enabled: true,
             })
 
             if (!config) {
-                logger.warn(`⚠️ Instância ${instanceKey} sem configuração Dialogflow`)
-                // Fallback para configuração global
+                logger.warn(
+                    `⚠️ Instância ${instanceKey} sem configuração Dialogflow`
+                )
                 this.loadGlobalConfig()
                 return
             }
@@ -66,33 +62,40 @@ class DialogflowHandler {
             this.languageCode = config.languageCode || 'pt-BR'
 
             this.initializeClient()
-            logger.info(`✅ Dialogflow configurado para instância ${instanceKey}: ${this.projectId}`)
-
+            logger.info(
+                `✅ Dialogflow configurado para instância ${instanceKey}: ${this.projectId}`
+            )
         } catch (error) {
-            logger.error(`❌ Erro ao carregar configuração da instância ${instanceKey}:`, error)
-            // Fallback para configuração global
+            logger.error(
+                `❌ Erro ao carregar configuração da instância ${instanceKey}:`,
+                error
+            )
             this.loadGlobalConfig()
         }
     }
 
-    /**
-     * Inicializa o cliente do Dialogflow
-     */
     initializeClient() {
         try {
-            // Limpa as quebras de linha da chave privada
             const formattedPrivateKey = this.privateKey.replace(/\\n/g, '\n')
-            
+
+            const { JWT } = require('google-auth-library')
+
+            const jwtClient = new JWT({
+                email: this.clientEmail,
+                key: formattedPrivateKey,
+                scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+            })
+
             this.sessionClient = new dialogflow.SessionsClient({
-                credentials: {
-                    client_email: this.clientEmail,
-                    private_key: formattedPrivateKey,
-                },
+                auth: jwtClient, 
                 projectId: this.projectId,
             })
+
             this.enabled = true
             this.initialized = true
-            logger.info(`✅ Cliente Dialogflow inicializado para projeto: ${this.projectId}`)
+            logger.info(
+                `✅ Cliente Dialogflow inicializado para projeto: ${this.projectId}`
+            )
         } catch (error) {
             logger.error('❌ Erro ao inicializar cliente Dialogflow:', error)
             this.enabled = false
@@ -100,24 +103,22 @@ class DialogflowHandler {
         }
     }
 
-    /**
-     * Recarrega configuração da instância (útil após atualizações)
-     */
     async reloadConfig(instanceKey) {
         this.instanceKey = instanceKey
         await this.loadInstanceConfig(instanceKey)
     }
 
-    /**
-     * Processa mensagem recebida
-     */
     async processMessage(messageData) {
         if (!this.enabled || !this.initialized) {
-            logger.warn(`⏭️ Dialogflow desativado para instância ${this.instanceKey || 'global'}`)
+            logger.warn(
+                `⏭️ Dialogflow desativado para instância ${
+                    this.instanceKey || 'global'
+                }`
+            )
             return {
                 success: false,
                 error: 'Dialogflow not configured',
-                responses: []
+                responses: [],
             }
         }
 
@@ -128,13 +129,15 @@ class DialogflowHandler {
                 return {
                     success: false,
                     error: 'No text to process',
-                    responses: []
+                    responses: [],
                 }
             }
 
             const sender = messageData.key.remoteJid.split('@')[0]
             // Usar sender + instanceKey para sessões únicas por instância
-            const sessionId = `${this.instanceKey || 'global'}_${sender || uuidv4()}`
+            const sessionId = `${this.instanceKey || 'global'}_${
+                sender || uuidv4()
+            }`
             const sessionPath = this.sessionClient.projectAgentSessionPath(
                 this.projectId,
                 sessionId
@@ -154,7 +157,7 @@ class DialogflowHandler {
             const responses = await this.sessionClient.detectIntent(request)
             const result = responses[0].queryResult
 
-           // logger.info(`📥 [${this.projectId}] Resposta: ${result.fulfillmentText}`)
+            // logger.info(`📥 [${this.projectId}] Resposta: ${result.fulfillmentText}`)
             const allResponses = this.extractAllResponses(result)
 
             return {
@@ -163,22 +166,18 @@ class DialogflowHandler {
                 intent: result.intent?.displayName,
                 confidence: result.intentDetectionConfidence,
                 projectId: this.projectId,
-                fulfillmentText: result.fulfillmentText
+                fulfillmentText: result.fulfillmentText,
             }
-       
         } catch (error) {
             logger.error(`❌ Erro no Dialogflow (${this.projectId}):`, error)
             return {
                 success: false,
                 error: error.message,
-                responses: []
+                responses: [],
             }
         }
     }
 
-    /**
-     * Extrai texto da mensagem do WhatsApp
-     */
     extractText(messageData) {
         if (!messageData.message) return null
 
@@ -218,13 +217,13 @@ class DialogflowHandler {
         }
     }
 
-    /**
-     * Extrai todas as respostas do queryResult
-     */
     extractAllResponses(queryResult) {
         const responses = []
 
-        if (queryResult.fulfillmentMessages && Array.isArray(queryResult.fulfillmentMessages)) {
+        if (
+            queryResult.fulfillmentMessages &&
+            Array.isArray(queryResult.fulfillmentMessages)
+        ) {
             const intent = queryResult.intent?.displayName
             queryResult.fulfillmentMessages.forEach((msg, index) => {
                 switch (msg.platform) {
@@ -283,16 +282,10 @@ class DialogflowHandler {
         return responses
     }
 
-    /**
-     * Verifica se o handler está ativo
-     */
     isEnabled() {
         return this.enabled && this.initialized
     }
 
-    /**
-     * Retorna informações da configuração atual
-     */
     getInfo() {
         return {
             instanceKey: this.instanceKey,
@@ -300,7 +293,11 @@ class DialogflowHandler {
             initialized: this.initialized,
             projectId: this.projectId,
             languageCode: this.languageCode,
-            configured: !!(this.projectId && this.privateKey && this.clientEmail)
+            configured: !!(
+                this.projectId &&
+                this.privateKey &&
+                this.clientEmail
+            ),
         }
     }
 }

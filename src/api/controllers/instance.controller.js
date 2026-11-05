@@ -332,7 +332,6 @@ exports.saveDialogFlowConfig = async (req, res) => {
             enabled
         } = req.body
 
-        // Validações básicas
         if (!googlePrivateKey || !googleClientEmail || !googleProjectId) {
             return res.status(400).json({
                 error: true,
@@ -340,7 +339,6 @@ exports.saveDialogFlowConfig = async (req, res) => {
             })
         }
 
-        // Verificar se a instância existe
         const instance = WhatsAppInstances[key]
         if (!instance) {
             return res.status(404).json({
@@ -349,7 +347,6 @@ exports.saveDialogFlowConfig = async (req, res) => {
             })
         }
 
-        // Verificar se já existe configuração
         const existing = await DialogFlowConfig.findOne({ instance_key: key })
         if (existing) {
             return res.status(400).json({
@@ -358,7 +355,6 @@ exports.saveDialogFlowConfig = async (req, res) => {
             })
         }
 
-        // Criar nova configuração
         const config = new DialogFlowConfig({
             instance_key: key,
             googlePrivateKey,
@@ -370,7 +366,6 @@ exports.saveDialogFlowConfig = async (req, res) => {
 
         await config.save()
 
-        // Atualizar a instância com a configuração (se necessário)
         if (instance.instance) {
             instance.instance.dialogflowConfig = config
         }
@@ -448,7 +443,6 @@ exports.updateDialogFlowConfig = async (req, res) => {
             'enabled'
         ]
 
-        // Filtrar apenas campos permitidos
         const updates = {}
         allowedUpdates.forEach(field => {
             if (updateData[field] !== undefined) {
@@ -478,7 +472,6 @@ exports.updateDialogFlowConfig = async (req, res) => {
             })
         }
 
-        // Atualizar instância em memória
         const instance = WhatsAppInstances[key]
         if (instance?.instance) {
             instance.instance.dialogflowConfig = config

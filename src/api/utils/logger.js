@@ -1,14 +1,13 @@
-// src/utils/logger.js
 const pino = require('pino')
 
 const logger = pino({
     level: 'info',
-    base: null, // Remove pid e hostname
-    timestamp: false, // Remove timestamp
+    base: null, 
+    timestamp: false,
     formatters: {
-        level: () => ({}), // Remove o campo level
+        level: () => ({}),
     },
-    messageKey: 'msg', // Mantém a mensagem
+    messageKey: 'msg',
 })
 
 module.exports = logger

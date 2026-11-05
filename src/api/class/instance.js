@@ -19,11 +19,12 @@ const DialogflowHandler = require('../../dialogflow/services/dialogflowHandler')
 const Message = require('../models/message.model')
 
 const DialogFlowConfig = require('../../api/models/dialogflow.mode')
+const { truncate } = require('fs/promises')
 
 class WhatsAppInstance {
     socketConfig = {
         defaultQueryTimeoutMs: undefined,
-        printQRInTerminal: false,
+        printQRInTerminal: truncate,
         logger: pino({
             level: config.log.level,
             base: null,
@@ -34,6 +35,7 @@ class WhatsAppInstance {
         }),
     }
     key = ''
+    qrExpired = false
     authState
     allowWebhook = undefined
     webhook = undefined
@@ -79,7 +81,7 @@ class WhatsAppInstance {
         //this.dialogflow = new DialogflowHandler()
         this.dialogflowHandler = null
         this.maxRetry = config.instance?.maxRetryQr || 3
-        this.sessionDir = path.join(__dirname, '../../sessions', key)
+        //this.sessionDir = path.join(__dirname, '../../sessions', key)
 
         this.botResponsesTimestamps = new Map()
 
@@ -135,7 +137,9 @@ class WhatsAppInstance {
 
         sock?.ev.on('connection.update', async (update) => {
             console.log('connection.update :: ', update.connection)
+
             const { connection, lastDisconnect, qr } = update
+
             global.io.emit(`instance:${this.key}:status`, {
                 connection,
                 timestamp: new Date().toISOString(),
@@ -146,10 +150,14 @@ class WhatsAppInstance {
             if (connection === 'close') {
                 const statusCode = lastDisconnect?.error?.output?.statusCode
 
+                if (this.qrExpired) {
+                    logger.info(`🛑 ${this.key}: QR expirado, não reconectando`)
+                    return
+                }
+
                 if (statusCode === DisconnectReason.loggedOut) {
                     console.log(`🔴 Instância ${this.key} desvinculada!`)
 
-                    // NOTIFICA EM TEMPO REAL
                     global.io.emit(`instance:${this.key}:logged_out`, {
                         instanceId: this.key,
                         reason: 'Dispositivo removido do WhatsApp',
@@ -157,7 +165,6 @@ class WhatsAppInstance {
                         action: 'reload_list',
                     })
 
-                    // Opcional: Notifica todos os admins
                     global.io.emit('admin:notification', {
                         type: 'instance_logged_out',
                         instanceId: this.key,
@@ -165,7 +172,15 @@ class WhatsAppInstance {
                     })
 
                     this.handleLogout()
+                    await this.collection.drop().catch(() => {}) // limpa auth do DB
+                    this.instance.online = false
                 } else {
+                    try {
+                        this.instance.sock?.ev.removeAllListeners()
+                        this.instance.sock?.ws?.close()
+                    } catch (_) {
+                        /* ignore */
+                    }
                     const shouldReconnect =
                         statusCode !== DisconnectReason.loggedOut
                     global.io.emit(`instance:${this.key}:disconnected`, {
@@ -173,6 +188,8 @@ class WhatsAppInstance {
                         shouldReconnect,
                         timestamp: new Date().toISOString(),
                     })
+
+                    await this.init()
                 }
 
                 if (
@@ -204,7 +221,8 @@ class WhatsAppInstance {
                     )
             } else if (connection === 'open') {
                 //await this.updateInstanceStatusInDb(this.key, 'connected')
-
+                this.instance.qrRetry = 0
+                this.qrExpired = false
                 global.io.emit(`instance:${this.key}:connected`, {
                     timestamp: new Date().toISOString(),
                 })
@@ -246,17 +264,16 @@ class WhatsAppInstance {
                             `✅ QR Code generated for ${this.key} (Attempt ${this.instance.qrRetry})`
                         )
 
-                        console.log('QrCode :: ', url)
+                        //console.log('QrCode :: ', url)
 
                         global.io.emit(`instance:${this.key}:qr`, {
                             qr: url,
                             attempt: this.instance.qrRetry,
                         })
 
-                        if (
-                            this.instance.qrRetry >= config.instance.maxRetryQr
-                        ) {
+                        if (this.instance.qrRetry >= this.maxRetry) {
                             // close WebSocket connection
+                            this.qrExpired = true     
                             this.instance.sock.ws.close()
                             // remove all events
                             this.instance.sock.ev.removeAllListeners()
@@ -480,11 +497,9 @@ class WhatsAppInstance {
     }
 
     handleLogout() {
-        // Limpa recursos, remove do banco, etc
         this.instance.online = false
         this.instance.qr = null
 
-        // Remove listeners
         this.instance.sock?.ev.removeAllListeners()
     }
 
@@ -510,21 +525,18 @@ class WhatsAppInstance {
 
     async initializeDialogflow() {
         try {
-            // Verifica se existe configuração no banco
             const config = await DialogFlowConfig.findOne({
                 instance_key: this.key,
                 enabled: true,
             })
-
+            //logger.info(`🔄 Dialogflow config : `+JSON.stringify(config))
             if (config) {
-                // Se tem configuração própria, usa ela
                 this.dialogflow = new DialogflowHandler(this.key)
-                await this.dialogflow.loadInstanceConfig(this.key)
+                await this.dialogflow.init()
                 logger.info(
                     `✅ Dialogflow configurado para instância ${this.key}`
                 )
             } else {
-                // Se não tem, usa configuração global (se disponível)
                 this.dialogflow = new DialogflowHandler()
                 if (this.dialogflow.isEnabled()) {
                     logger.info(
@@ -597,9 +609,6 @@ class WhatsAppInstance {
     }
 
     async processMessageWithDialogflow(messageData) {
-        // console.log('Message received, processing with Dialogflow...', {
-        //     messageData,
-        // })
         try {
             const userId = messageData.key.remoteJid
             const now = Date.now()
@@ -618,7 +627,7 @@ class WhatsAppInstance {
             })
 
             if (!this.dialogflow || !this.dialogflow.isEnabled()) {
-                console.log(
+                logger.info(
                     `⚠️ Dialogflow não disponível para instância ${this.key}`
                 )
                 return
@@ -628,7 +637,7 @@ class WhatsAppInstance {
                 messageData
             )
 
-            console.log('📥 Resultado do Dialogflow:', {
+            logger.info('📥 Resultado do Dialogflow:', {
                 success: dialogflowResult.success,
                 hasResponses: dialogflowResult.responses?.length > 0,
                 intent: dialogflowResult.intent,
@@ -636,7 +645,7 @@ class WhatsAppInstance {
             })
 
             if (!dialogflowResult.success) {
-                console.error('❌ Erro no Dialogflow:', dialogflowResult.error)
+                logger.error('❌ Erro no Dialogflow:', dialogflowResult.error)
                 return
             }
 

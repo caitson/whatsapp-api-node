@@ -26,7 +26,7 @@ server = http.createServer(app)
 // Configurar Socket.io
 io = new Server(server, {
     cors: {
-        origin: ['http://localhost:4200', 'http://localhost:4201'],
+        origin: process.env.CORS_ORIGINS?.split(','),
         methods: ['GET', 'POST'],
         credentials: true,
     },

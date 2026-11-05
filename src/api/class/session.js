@@ -28,7 +28,7 @@ class Session {
             const key = collection.name
 
             if (this.systemCollection.includes(key)) {
-                logger.info(`⏭️ Ignorando coleção do sistema: ${key}`)
+                //logger.info(`⏭️ Ignorando coleção do sistema: ${key}`)
                 continue
             }
 

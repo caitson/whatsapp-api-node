@@ -38,10 +38,9 @@ const DialogFlowConfigSchema = new mongoose.Schema({
     }
 })
 
-// Middleware para atualizar o updatedAt antes de salvar
 DialogFlowConfigSchema.pre('save', function(next) {
     this.updatedAt = Date.now()
-    next()
+    //next()
 })
 
 module.exports = mongoose.model('DialogFlowConfig', DialogFlowConfigSchema)
