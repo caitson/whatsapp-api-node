@@ -32,7 +32,7 @@
     "dependencies": {
         "@adiwajshing/keyed-db": "^0.2.4",
         "@google-cloud/dialogflow": "^8.4.0",
-        "@whiskeysockets/baileys": "^7.0.0-rc14",
+        "@whiskeysockets/baileys": "^6.7.24",
         "axios": "^1.21.0",
         "body-parser": "^2.4.0",
         "cors": "^2.8.6",

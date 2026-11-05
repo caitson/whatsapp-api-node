@@ -23,8 +23,12 @@ const { truncate } = require('fs/promises')
 
 class WhatsAppInstance {
     socketConfig = {
-        defaultQueryTimeoutMs: undefined,
-        printQRInTerminal: truncate,
+        syncFullHistory: false,
+        shouldSyncHistoryMessage: ({ syncType }) => syncType !== 2,
+        defaultQueryTimeoutMs: 60000,
+        markOnlineOnConnect: false,
+        fireInitQueries: true,
+        printQRInTerminal: false,
         logger: pino({
             level: config.log.level,
             base: null,
@@ -103,12 +107,12 @@ class WhatsAppInstance {
             })
         }
 
-        console.log('🔧 WhatsAppInstance constructor:', {
-            key,
-            hasIo: !!io, // Deve ser true
-            ioAvailable: this.io ? '✅' : '❌',
-            ioSource: io ? 'parameter' : global.io ? 'global' : 'none',
-        })
+        // console.log('🔧 WhatsAppInstance constructor:', {
+        //     key,
+        //     hasIo: !!io, // Deve ser true
+        //     ioAvailable: this.io ? '✅' : '❌',
+        //     ioSource: io ? 'parameter' : global.io ? 'global' : 'none',
+        // })
 
         // Inicializa o DialogflowHandler de forma assíncrona
         this.initializeDialogflow()
@@ -136,7 +140,7 @@ class WhatsAppInstance {
         })
 
         sock?.ev.on('connection.update', async (update) => {
-            console.log('connection.update :: ', update.connection)
+            logger.info('connection.update :: ' + update.connection)
 
             const { connection, lastDisconnect, qr } = update
 
@@ -155,8 +159,11 @@ class WhatsAppInstance {
                     return
                 }
 
+                // ============================================================
+                // CASO 1: loggedOut (sessão removida do celular)
+                // ============================================================
                 if (statusCode === DisconnectReason.loggedOut) {
-                    console.log(`🔴 Instância ${this.key} desvinculada!`)
+                    logger.info(`🔴 Instância ${this.key} desvinculada!`)
 
                     global.io.emit(`instance:${this.key}:logged_out`, {
                         instanceId: this.key,
@@ -172,38 +179,51 @@ class WhatsAppInstance {
                     })
 
                     this.handleLogout()
-                    await this.collection.drop().catch(() => {}) // limpa auth do DB
-                    this.instance.online = false
-                } else {
+
+                    // Limpa auth do MongoDB (vai precisar novo QR)
                     try {
-                        this.instance.sock?.ev.removeAllListeners()
-                        this.instance.sock?.ws?.close()
-                    } catch (_) {
-                        /* ignore */
+                        await this.collection.drop()
+                        logger.info(
+                            `🗑️ Auth de ${this.key} removida do MongoDB`
+                        )
+                    } catch (err) {
+                        logger.warn(`⚠️ Erro ao dropar auth: ${err.message}`)
                     }
-                    const shouldReconnect =
-                        statusCode !== DisconnectReason.loggedOut
-                    global.io.emit(`instance:${this.key}:disconnected`, {
-                        reason: lastDisconnect?.error?.message,
-                        shouldReconnect,
-                        timestamp: new Date().toISOString(),
-                    })
 
-                    await this.init()
-                }
-
-                if (
-                    lastDisconnect?.error?.output?.statusCode !==
-                    DisconnectReason.loggedOut
-                ) {
-                    await this.init()
-                } else {
-                    await this.collection.drop().then((r) => {
-                        logger.info('STATE: Droped collection')
-                    })
                     this.instance.online = false
+
+                    // ⚠️ NÃO reconecta — precisa de novo QR
+                    return
                 }
 
+                // ============================================================
+                // CASO 2: qualquer outro erro (rede, timeout, restart, etc.)
+                // Reconecta UMA vez com delay
+                // ============================================================
+                logger.info(
+                    `🔄 ${this.key}: reconectando (code=${statusCode})...`
+                )
+
+                // Limpa o socket antigo ANTES de criar o novo
+                try {
+                    this.instance.sock?.ev?.removeAllListeners()
+                    this.instance.sock?.ws?.close()
+                } catch (_) {
+                    /* ignore */
+                }
+
+                global.io.emit(`instance:${this.key}:disconnected`, {
+                    reason: lastDisconnect?.error?.message,
+                    shouldReconnect: true,
+                    timestamp: new Date().toISOString(),
+                })
+
+                // ⏱️ Delay curto para evitar hot-loop
+                await new Promise((r) => setTimeout(r, 5000))
+
+                await this.init() // ← ✅ ÚNICA chamada de init no reconect
+
+                // webhook
                 if (
                     [
                         'all',
@@ -211,14 +231,13 @@ class WhatsAppInstance {
                         'connection.update',
                         'connection:close',
                     ].some((e) => config.webhookAllowedEvents.includes(e))
-                )
+                ) {
                     await this.SendWebhook(
                         'connection',
-                        {
-                            connection: connection,
-                        },
+                        { connection },
                         this.key
                     )
+                }
             } else if (connection === 'open') {
                 //await this.updateInstanceStatusInDb(this.key, 'connected')
                 this.instance.qrRetry = 0
@@ -273,7 +292,7 @@ class WhatsAppInstance {
 
                         if (this.instance.qrRetry >= this.maxRetry) {
                             // close WebSocket connection
-                            this.qrExpired = true     
+                            this.qrExpired = true
                             this.instance.sock.ws.close()
                             // remove all events
                             this.instance.sock.ev.removeAllListeners()
@@ -354,8 +373,18 @@ class WhatsAppInstance {
             })
         })
 
-        // on new mssage
         sock?.ev.on('messages.upsert', async (m) => {
+            console.log('\n🔬🔬🔬 [messages.upsert] RECEBIDO:', {
+                type: m.type,
+                count: m.messages?.length,
+            })
+
+            console.log(
+                '🔬 [messages.upsert] type=',
+                m.type,
+                'messages=',
+                m.messages?.length
+            )
             if (m.type === 'prepend') {
                 this.instance.messages.unshift(...m.messages)
                 return
@@ -367,10 +396,7 @@ class WhatsAppInstance {
 
             const incomingMessages = m.messages.filter((msg) => {
                 if (msg.key.fromMe) {
-                    logger.log(
-                        '⏭️ Ignorando mensagem enviada pelo bot:',
-                        msg.key.id
-                    )
+                    logger.log('⏭️ Ignorando mensagem enviada pelo bot:' +msg.key.id)
                     return false
                 }
 
@@ -1580,6 +1606,7 @@ class WhatsAppInstance {
     }
 
     async processMessageByType(msg, messageType) {
+        console.log(`Processing message of type: ${messageType}`)
         const message = msg.message
 
         switch (messageType) {
