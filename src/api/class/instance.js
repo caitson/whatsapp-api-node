@@ -140,9 +140,19 @@ class WhatsAppInstance {
         })
 
         sock?.ev.on('connection.update', async (update) => {
-            logger.info('connection.update :: ' + update.connection)
+            // logger.info('connection.update :: ' + update.connection)
 
             const { connection, lastDisconnect, qr } = update
+
+            logger.info(
+                'connection.update :: ' +
+                    (update.connection ||
+                        JSON.stringify({
+                            connection,
+                            lastDisconnect: lastDisconnect?.error?.message,
+                            qr: !!qr,
+                        }))
+            )
 
             global.io.emit(`instance:${this.key}:status`, {
                 connection,
@@ -283,7 +293,11 @@ class WhatsAppInstance {
                             `✅ QR Code generated for ${this.key} (Attempt ${this.instance.qrRetry})`
                         )
 
-                        //console.log('QrCode :: ', url)
+                        console.log(
+                            `QrCode :: ${this.key} base64: ` +
+                                url.substring(0, 50) +
+                                '...'
+                        )
 
                         global.io.emit(`instance:${this.key}:qr`, {
                             qr: url,
@@ -374,17 +388,6 @@ class WhatsAppInstance {
         })
 
         sock?.ev.on('messages.upsert', async (m) => {
-            console.log('\n🔬🔬🔬 [messages.upsert] RECEBIDO:', {
-                type: m.type,
-                count: m.messages?.length,
-            })
-
-            console.log(
-                '🔬 [messages.upsert] type=',
-                m.type,
-                'messages=',
-                m.messages?.length
-            )
             if (m.type === 'prepend') {
                 this.instance.messages.unshift(...m.messages)
                 return
@@ -396,7 +399,9 @@ class WhatsAppInstance {
 
             const incomingMessages = m.messages.filter((msg) => {
                 if (msg.key.fromMe) {
-                    logger.log('⏭️ Ignorando mensagem enviada pelo bot:' +msg.key.id)
+                    logger.log(
+                        '⏭️ Ignorando mensagem enviada pelo bot:' + msg.key.id
+                    )
                     return false
                 }
 
@@ -413,7 +418,6 @@ class WhatsAppInstance {
             }
 
             for (const msg of incomingMessages) {
-                // console.log('msg : ',msg)
                 const messageType = this.getMessageType(msg.message)
                 await this.processMessageByType(msg, messageType)
             }
@@ -551,33 +555,43 @@ class WhatsAppInstance {
 
     async initializeDialogflow() {
         try {
-            const config = await DialogFlowConfig.findOne({
-                instance_key: this.key,
-                enabled: true,
-            })
-            //logger.info(`🔄 Dialogflow config : `+JSON.stringify(config))
-            if (config) {
-                this.dialogflow = new DialogflowHandler(this.key)
-                await this.dialogflow.init()
+            this.dialogflow = new DialogflowHandler(this.key)
+
+            await this.dialogflow.init() // picks instance config if exists, falls back to global
+
+            if (this.dialogflow.isEnabled()) {
                 logger.info(
-                    `✅ Dialogflow configurado para instância ${this.key}`
+                    `✅ Dialogflow configurado para ${this.key} (projeto ${
+                        this.dialogflow.getInfo().projectId
+                    })`
                 )
             } else {
-                this.dialogflow = new DialogflowHandler()
-                if (this.dialogflow.isEnabled()) {
-                    logger.info(
-                        `✅ Dialogflow global configurado para instância ${this.key}`
-                    )
-                } else {
-                    logger.info(`ℹ️ Instância ${this.key} sem Dialogflow`)
-                }
+                logger.info(`ℹ️ Instância ${this.key} sem Dialogflow`)
             }
+            // const config = await DialogFlowConfig.findOne({
+            //     instance_key: this.key,
+            //     enabled: true,
+            // })
+            // //logger.info(`🔄 Dialogflow config : `+JSON.stringify(config))
+            // if (config) {
+            //     this.dialogflow = new DialogflowHandler(this.key)
+            //     await this.dialogflow.init()
+            //     logger.info(`✅ Dialogflow configurado para instância ${this.key}`)
+            // } else {
+            //     this.dialogflow = new DialogflowHandler()
+            //     if (this.dialogflow.isEnabled()) {
+            //         logger.info(`✅ Dialogflow global configurado para instância ${this.key}`)
+            //     } else {
+            //         logger.info(`ℹ️ Instância ${this.key} sem Dialogflow`)
+            //     }
+            // }
         } catch (error) {
             logger.error(
                 `❌ Erro ao inicializar Dialogflow para ${this.key}:`,
                 error
             )
-            this.dialogflow = new DialogflowHandler() // Fallback para global
+            // this.dialogflow = new DialogflowHandler() // Fallback para global
+            this.dialogflow = null
         }
     }
 
@@ -636,20 +650,28 @@ class WhatsAppInstance {
 
     async processMessageWithDialogflow(messageData) {
         try {
-            const userId = messageData.key.remoteJid
-            const now = Date.now()
+            const remoteJid = messageData.key.remoteJid
+            const messageId = messageData.key.id
+            const sessionId = this.getSessionId(remoteJid)
+            const messageType = this.getMessageType(messageData.message)
+            const content =
+                messageData.message?.conversation ||
+                messageData.message?.extendedTextMessage?.text ||
+                null
 
-            await this.saveMessage({
+            const incomingDoc = await this.saveMessage({
                 instanceKey: this.key,
-                remoteJid: userId,
+                sessionId: sessionId,
+                remoteJid: remoteJid,
                 pushName: messageData.pushName,
-                messageId: messageData.key.id,
-                messageType: 'text',
-                content:
-                    messageData.message?.conversation ||
-                    messageData.message?.extendedTextMessage?.text,
+                messageId: messageId,
+                messageType: messageType,
+                content: content,
                 direction: 'incoming',
-                timestamp: new Date(messageData.messageTimestamp * 1000),
+                status: 'received',
+                timestamp: new Date(
+                    (messageData.messageTimestamp || Date.now() / 1000) * 1000
+                ),
             })
 
             if (!this.dialogflow || !this.dialogflow.isEnabled()) {
@@ -659,9 +681,25 @@ class WhatsAppInstance {
                 return
             }
 
-            const dialogflowResult = await this.dialogflow.processMessage(
-                messageData
-            )
+            let dialogflowResult
+
+            try {
+                dialogflowResult = await this.dialogflow.processMessage(
+                    messageData
+                )
+            } catch (err) {
+                if (incomingDoc) {
+                    await Message.updateOne(
+                        { _id: incomingDoc._id },
+                        { $set: { status: 'failed', error: err.message } }
+                    )
+                }
+                return
+            }
+
+            // dialogflowResult = await this.dialogflow.processMessage(
+            //     messageData
+            // )
 
             logger.info('📥 Resultado do Dialogflow:', {
                 success: dialogflowResult.success,
@@ -671,57 +709,73 @@ class WhatsAppInstance {
             })
 
             if (!dialogflowResult.success) {
-                logger.error('❌ Erro no Dialogflow:', dialogflowResult.error)
+                if (incomingDoc) {
+                    await Message.updateOne(
+                        { _id: incomingDoc._id },
+                        {
+                            $set: {
+                                status: 'failed',
+                                error: dialogflowResult.error || 'unknown',
+                            },
+                        }
+                    )
+                }
+                logger.error('❌ Dialogflow falhou:', dialogflowResult.error)
                 return
             }
 
-            const textResponses =
-                dialogflowResult.responses?.filter((r) => r.type === 'text') ||
-                []
-
-            if (textResponses.length === 0) {
-                return
+            if (incomingDoc) {
+                await Message.updateOne(
+                    { _id: incomingDoc._id },
+                    {
+                        $set: {
+                            status: 'processed',
+                            intent: dialogflowResult.intent,
+                            confidence: dialogflowResult.confidence,
+                            dialogflowResponse: dialogflowResult,
+                        },
+                    }
+                )
             }
 
-            // console.log(
-            //     `💬 Enviando ${textResponses.length} respostas de Dialogflow para ${userId}...`
-            // )
+            const textResponses = (dialogflowResult.responses || []).filter(
+                (r) => r.type === 'text'
+            )
 
             for (let i = 0; i < textResponses.length; i++) {
                 const response = textResponses[i]
-
-                await this.saveMessage({
-                    instanceKey: this.key,
-                    remoteJid: userId,
-                    pushName: messageData.pushName,
-                    messageId: `response_${Date.now()}_${i}`,
-                    messageType: 'text',
-                    content: response.content,
-                    response: response,
-                    direction: 'outgoing',
-                    timestamp: new Date(),
-                })
-
-                // Envia a mensagem
-                await this.sendDialogflowResponse(
-                    messageData.key.remoteJid,
+                const sendResult = await this.sendDialogflowResponse(
+                    remoteJid,
                     response.content,
                     messageData.pushName
                 )
 
-                // Aguarda um pouco entre mensagens (1-2 segundos)
-                // Isso é importante para não floodar o WhatsApp
+                // B3: usa o ID real retornado pelo WhatsApp
+                const outgoingId =
+                    sendResult?.messageId || `local_${Date.now()}_${i}`
+
+                await this.saveMessage({
+                    instanceKey: this.key,
+                    sessionId,
+                    remoteJid,
+                    pushName: messageData.pushName,
+                    messageId: outgoingId,
+                    direction: 'outgoing',
+                    messageType: 'text',
+                    content: response.content,
+                    status: sendResult?.success ? 'sent' : 'failed',
+                    error: sendResult?.error,
+                    isFromSupport: false,
+                    timestamp: new Date(),
+                })
+
                 if (i < textResponses.length - 1) {
-                    // Não espera após a última
-                    const delay = Math.floor(Math.random() * 1000) + 1000 // 1-2 segundos
-                    console.log(
-                        `⏳ Aguardando ${delay}ms antes da próxima mensagem...`
-                    )
-                    await new Promise((resolve) => setTimeout(resolve, delay))
+                    const delay = 1000 + Math.floor(Math.random() * 1000)
+                    await new Promise((r) => setTimeout(r, delay))
                 }
             }
 
-            this.botResponsesTimestamps.set(userId, now)
+            this.botResponsesTimestamps.set(remoteJid, Date.now())
 
             console.log(
                 `✅ Todas as ${textResponses.length} mensagens enviadas`
@@ -1579,6 +1633,7 @@ class WhatsAppInstance {
             'stickerMessage',
             'locationMessage',
             'contactMessage',
+            'extendedTextMessage',
             'contactsArrayMessage',
             'liveLocationMessage',
             'pollCreationMessage',
@@ -1611,6 +1666,7 @@ class WhatsAppInstance {
 
         switch (messageType) {
             case 'conversation':
+            case 'extendedTextMessage':
                 await this.processMessageWithDialogflow(msg)
                 break
 
@@ -1737,7 +1793,18 @@ class WhatsAppInstance {
             await message.save()
             return message
         } catch (error) {
-            console.error('Erro ao salvar mensagem:', error)
+            if (error.code === 11000) {
+                logger.debug(
+                    `↺ Msg duplicada ignorada (${messageData.messageId})`
+                )
+                return null
+            }
+            logger.error('❌ Erro ao salvar mensagem:', {
+                err: error.message,
+                messageId: messageData.messageId,
+                instanceKey: messageData.instanceKey,
+            })
+            return null
         }
     }
 
@@ -1757,6 +1824,38 @@ class WhatsAppInstance {
         } catch (error) {
             console.error(`❌ Erro ao atualizar status:`, error)
         }
+    }
+
+    getSessionId(remoteJid) {
+        const sender = (remoteJid || '').split('@')[0]
+        return `${this.key}_${sender}`
+    }
+
+    sendTextAndSave = async (to, text, options = {}) => {
+        const whatsappId = this.getWhatsAppId(to)
+        const result = await this.sendTextMessage(
+            whatsappId,
+            text,
+            options.pushName
+        )
+
+        if (result?.key?.id) {
+            await this.saveMessage({
+                instanceKey: this.key,
+                sessionId: this.getSessionId(whatsappId),
+                remoteJid: whatsappId,
+                pushName: options.pushName,
+                messageId: result.key.id,
+                direction: 'outgoing',
+                messageType: 'text',
+                content: text,
+                status: 'sent',
+                isFromSupport: options.isFromSupport ?? true,
+                supportAgentId: options.supportAgentId,
+                timestamp: new Date(),
+            })
+        }
+        return result
     }
 }
 

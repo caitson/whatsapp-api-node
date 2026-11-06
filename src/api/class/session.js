@@ -35,7 +35,6 @@ class Session {
             const webhook = config.webhookEnabled ?? undefined
             const webhookUrl = config.webhookUrl ?? undefined
 
-            // 🟢 PASSA O IO GLOBAL PARA A INSTÂNCIA!
             const instance = new WhatsAppInstance(
                 key,
                 webhook,
@@ -92,19 +91,16 @@ class Session {
             global.io
         )
 
-        // 2. Inicializa (começa a gerar QR)
         await instance.init()
 
-        // 3. SALVA NO BANCO IMEDIATAMENTE (antes do scan!)
         await this.saveInstanceToDb(key, {
             allowWebhook,
             webhook,
             options,
-            status: 'awaiting_scan', // ← MARCA COMO AGUARDANDO SCAN
+            status: 'awaiting_scan',
             createdAt: new Date(),
         })
 
-        // 4. Adiciona ao mapa
         WhatsAppInstances[key] = instance
 
         return instance
@@ -141,22 +137,18 @@ class Session {
 
             const db = global.mongoClient.db('whatsapp-api')
 
-            // 🟢 LOGS PARA DEBUG
             console.log(`🔍 Verificando coleção para instância: ${key}`)
 
-            // Verifica se a coleção já existe
             const collections = await db.listCollections().toArray()
             const collectionNames = collections.map((c) => c.name)
             const hasCollection = collectionNames.includes(key)
 
-            // 🟢 CRIA COLEÇÃO SE NÃO EXISTIR
             if (!hasCollection) {
                 console.log(`📦 Criando coleção ${key}...`)
                 await db.createCollection(key)
                 console.log(`✅ Coleção ${key} criada com sucesso`)
             }
 
-            // Prepara dados para inserir
             const updateData = {
                 key,
                 webhook: data.webhook || false,
@@ -164,13 +156,11 @@ class Session {
                 status: data.status || 'pending',
                 createdAt: data.createdAt || new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
-                // 🟢 Campos adicionais úteis
                 instanceKey: key,
                 lastSeen: null,
                 metadata: data.metadata || {},
             }
 
-            // 🟢 INSERE/ATUALIZA na coleção da instância
             const result = await db
                 .collection(key)
                 .updateOne({ key }, { $set: updateData }, { upsert: true })
@@ -196,13 +186,11 @@ class Session {
         }
     }
 
-    // Método para remover instância
     async removeInstance(key) {
         logger.info(`🗑️ Removendo instância: ${key}`)
 
         const instance = WhatsAppInstances[key]
         if (instance) {
-            // Notificar via Socket.io que a instância foi removida
             if (global.io) {
                 global.io.emit(`instance:${key}:removed`, {
                     instanceId: key,
@@ -210,7 +198,6 @@ class Session {
                 })
             }
 
-            // Limpar recursos
             instance.instance.sock?.ev.removeAllListeners()
             instance.instance.sock?.ws.close()
 
@@ -226,13 +213,10 @@ class Session {
         try {
             const db = global.mongoClient.db('whatsapp-api')
 
-            // Remove do mapa
             delete WhatsAppInstances[key]
 
-            // Remove da coleção de instâncias
             await db.collection('instances').deleteOne({ key })
 
-            // Remove a coleção de credenciais (se existir)
             await db
                 .collection(key)
                 .drop()
@@ -250,14 +234,12 @@ class Session {
         try {
             const db = global.mongoClient.db('whatsapp-api')
 
-            // Busca todas as instâncias registradas
             const instances = await db
                 .collection('instances')
                 .find()
                 .sort({ createdAt: -1 })
                 .toArray()
-
-            // Enriquece com dados de conexão atual
+                
             const enriched = instances.map((inst) => ({
                 ...inst,
                 connected:

@@ -1,5 +1,6 @@
 const express = require('express')
 const controller = require('../controllers/message.controller')
+const historyCtrl = require('../controllers/message.history.controller')
 const keyVerify = require('../middlewares/keyCheck')
 const loginVerify = require('../middlewares/loginCheck')
 const multer = require('multer')
@@ -52,5 +53,13 @@ router.route('/react').post(keyVerify, loginVerify, controller.React)
 //         query: req.query,
 //     })
 // })
+
+// --- histórico (NOVO) ---
+router.route('/history').get(keyVerify, loginVerify, historyCtrl.History)
+router.route('/conversations').get(keyVerify, loginVerify, historyCtrl.Conversations)
+router
+    .route('/conversations/:remoteJid')
+    .get(keyVerify, loginVerify, historyCtrl.ConversationDetail)
+router.route('/stats').get(keyVerify, loginVerify, historyCtrl.Stats)
 
 module.exports = router

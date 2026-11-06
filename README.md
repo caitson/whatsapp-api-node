@@ -1,16 +1,8 @@
 # Archive Notice 🔒
 
 #https://github.com/salman0ansari/whatsapp-api-nodejs
-yar
-After three years, I've decided to archive this open-source WhatsApp API project. Your support and contributions have been incredible!
 
-While I'm no longer actively maintaining this project, I've been working on something new and exciting. It's not open-source, but it's a powerful API that provides advanced features for those who need them. If you're interested in exploring this, feel free to reach out for more information.
-
-Thank you once again for being a part of this journey. Keep building amazing things with technology!
-
-Best regards,
-
-An implementation of [Baileys](https://github.com/WhiskeySockets/Baileys) as a simple RESTful API service with multi device support just `download`, `install`, and `start` using, `simple` as that.
+[Baileys](https://github.com/WhiskeySockets/Baileys) as a simple RESTful API service with multi device support just `download`, `install`, and `start` using, `simple` as that.
 
 # Libraries Used
 

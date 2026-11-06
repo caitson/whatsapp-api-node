@@ -10,5 +10,6 @@ router.use('/instance', instanceRoutes)
 router.use('/message', messageRoutes)
 router.use('/group', groupRoutes)
 router.use('/misc', miscRoutes)
+// router.get('/history', historyCtrl.History)
 
 module.exports = router

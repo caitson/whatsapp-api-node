@@ -62,9 +62,9 @@ class DialogflowHandler {
             this.languageCode = config.languageCode || 'pt-BR'
 
             this.initializeClient()
-            logger.info(
-                `✅ Dialogflow configurado para instância ${instanceKey}: ${this.projectId}`
-            )
+            // logger.info(
+            //     `✅ Dialogflow configurado para instância ${instanceKey}: ${this.projectId}`
+            // )
         } catch (error) {
             logger.error(
                 `❌ Erro ao carregar configuração da instância ${instanceKey}:`,
@@ -78,16 +78,11 @@ class DialogflowHandler {
         try {
             const formattedPrivateKey = this.privateKey.replace(/\\n/g, '\n')
 
-            const { JWT } = require('google-auth-library')
-
-            const jwtClient = new JWT({
-                email: this.clientEmail,
-                key: formattedPrivateKey,
-                scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-            })
-
             this.sessionClient = new dialogflow.SessionsClient({
-                auth: jwtClient, 
+                credentials: {
+                    client_email: this.clientEmail,
+                    private_key: formattedPrivateKey,
+                },
                 projectId: this.projectId,
             })
 

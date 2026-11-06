@@ -32,7 +32,14 @@ exports.Text = async (req, res) => {
     }
     
     try {
-        const data = await instance.sendTextMessage(id, message)
+        
+        // const data = await instance.sendTextMessage(id, message)
+
+         const data = await instance.sendTextAndSave(id, message, {
+            isFromSupport: true,
+            supportAgentId: req.body?.supportAgentId,
+        })
+
         console.log('Message sent successfully!', {
             messageId: data?.key?.id,
             to: id
